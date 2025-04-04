@@ -115,7 +115,16 @@ def generate_headline(post_title):
     try:
         # Truncate the title to avoid hitting token limits
         truncated_title = post_title[:200]
-        prompt = f"Create a short, engaging TikTok caption (under 100 characters) based on this NBA content: {truncated_title}"
+        prompt = "Your job is to take captions that I give you and turn them into a headline that would be used on a TikTok video. I will give you the input at the end, your output"
+        "should ONLY be the new title. There should be nothing else besides the caption as your output. Here are some rule to follow:\n"
+        "It should be the text at the top or bottom of the video that explains what's happening in the video. "
+        "It should be tailored for TikTok SEO. You should also always remove the _VERTICAL.mp4. We want a max of 2 emojis, and NO HASHTAGS. "
+        "If a name is included, you should keep the name in the caption. "
+        "Here is an example input and output:\n\n"
+        "Input: '[Highlight] Cam Ward throws a dime at Miami Pro Day_VERTICAL'\n"
+
+        "Output: 'Cam Ward Drops a DIME at Miami Pro Day'\n\n"
+        f"Here is the Input: '{truncated_title}"
         
         headers = {
             "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
