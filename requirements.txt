@@ -1,4 +1,4 @@
-praw==7.7.0
+praw==7.8.1
 yt-dlp==2023.11.16
 google-api-python-client==2.104.0
 google-auth==2.23.4
