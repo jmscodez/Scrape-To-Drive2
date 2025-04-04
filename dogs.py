@@ -74,24 +74,30 @@ def download_video(url, max_retries=3):
                 'quiet': True,
                 'no_warnings': True,
                 'retries': 3,
-                'fragment_retries': 3,
-                'skip_unavailable_fragments': True,
                 'extractor_retries': 3,
                 'http_headers': {
-                    'User-Agent': random.choice(USER_AGENTS),
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                     'Accept-Language': 'en-US,en;q=0.9',
-                    'Referer': 'https://www.reddit.com/'
+                    'Referer': 'https://www.reddit.com/',
+                    'Origin': 'https://www.reddit.com',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'same-origin',
+                    'DNT': '1'
                 },
                 'extractor_args': {
                     'reddit': {'skip_auth': True},
                     'youtube': {'skip': ['dash', 'hls']},
                     'twitter': {'include': ['native_video']}
-                }
+                },
+                'cookiefile': 'cookies.txt',  # Optional: Create if needed
+                'sleep_interval': 5,  # Delay between requests
+                'force_ipv4': True,  # Bypass some blocks
             }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                downloaded_file = ydl.prepare_filename(info)
+            
                 
                 # Verify the file has audio
                 result = subprocess.run(
