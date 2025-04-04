@@ -50,10 +50,16 @@ VIDEO_DOMAINS = {
     'dailymotion.com', 'rumble.com'
 }
 
+def sanitize_filename(filename):
+    """Sanitize the filename to avoid issues with long names and special characters"""
+    filename = re.sub(r'[\\/*?:"<>|]', "", filename)
+    filename = filename[:100]  # Limit filename length
+    return filename.strip()
+
 def download_video(url):
     try:
         ydl_opts = {
-            'outtmpl': '%(title)s.%(ext)s',
+            'outtmpl': '%(id)s.%(ext)s',  # Use post ID instead of title to avoid long filenames
             'format': 'bestvideo[height<=1080]+bestaudio/best',
             'merge_output_format': 'mp4',
             'quiet': True,
@@ -61,6 +67,11 @@ def download_video(url):
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                               'AppleWebKit/537.36 (KHTML, like Gecko) '
                               'Chrome/122.0.0.0 Safari/537.36'
+            },
+            'extractor_args': {
+                'reddit': {
+                    'skip_auth': True  # Skip authentication which might be causing JSON issues
+                }
             }
         }
         
@@ -68,6 +79,7 @@ def download_video(url):
             info = ydl.extract_info(url, download=True)
             downloaded_file = ydl.prepare_filename(info)
             
+            # Verify the file has audio
             result = subprocess.run(
                 ['ffprobe', '-loglevel', 'error', '-select_streams', 'a',
                  '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', downloaded_file],
@@ -81,7 +93,7 @@ def download_video(url):
             return downloaded_file, info.get('duration', 0)
             
     except Exception as e:
-        print(f"❌ Download failed: {str(e)}")
+        print(f"❌ Download failed for {url}: {str(e)}")
         return None, 0
 
 def convert_to_tiktok(video_path):
@@ -99,29 +111,33 @@ def convert_to_tiktok(video_path):
         return None
 
 # ------------------ OpenRouter API ------------------
-def generate_headline(caption):
+def generate_headline(post_title):
     try:
-        prompt = f"Create viral TikTok caption from: {caption.replace('_VERTICAL.mp4', '')}"
+        # Truncate the title to avoid hitting token limits
+        truncated_title = post_title[:200]
+        prompt = f"Create a short, engaging TikTok caption (under 100 characters) based on this NBA content: {truncated_title}"
+        
         headers = {
             "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
             "Content-Type": "application/json"
         }
         payload = {
             "model": "google/gemma-2-9b-it",
-            "messages": [{"role": "user", "content": prompt}]
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 100
         }
         response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
+        response.raise_for_status()
         return response.json()['choices'][0]['message']['content'].strip()
     except Exception as e:
         print(f"⚠️ Headline generation failed: {str(e)}")
-        return None
+        return post_title[:100]  # Fallback to truncated title
 
 # ------------------ Main Process ------------------
 reddit = praw.Reddit(
     client_id=os.environ['REDDIT_CLIENT_ID'],
     client_secret=os.environ['REDDIT_CLIENT_SECRET'],
-    user_agent="script:RedditVideoBot:v1.0 (by /u/Proof_Difficulty_396)",  # Must follow Reddit's format
-    check_for_async=False  # Add this line
+    user_agent="script:mybot:v1.0 (by /u/Proof_Difficulty_396)"
 )
 
 if __name__ == "__main__":
@@ -136,6 +152,10 @@ if __name__ == "__main__":
             break
             
         try:
+            # Skip if not a video domain
+            if not any(domain in post.url for domain in VIDEO_DOMAINS):
+                continue
+                
             video_path, duration = download_video(post.url)
             if not video_path or not (10 <= duration <= 180):
                 continue
@@ -144,16 +164,17 @@ if __name__ == "__main__":
             os.remove(video_path)
 
             if vertical_path:
-                headline = generate_headline(os.path.basename(vertical_path)) or post.title
-                sanitized_headline = re.sub(r'[\\/*?:"<>|]', "", headline)
-                final_path = f"{sanitized_headline[:250]}.mp4"
+                headline = generate_headline(post.title)
+                sanitized_headline = sanitize_filename(headline)
+                final_path = f"{sanitized_headline}.mp4"
                 os.rename(vertical_path, final_path)
                 
                 upload_to_drive(drive_service, folder_id, final_path)
                 os.remove(final_path)
                 processed += 1
+                print(f"✅ Processed: {sanitized_headline}")
 
         except Exception as e:
-            print(f"⚠️ Error processing: {str(e)}")
+            print(f"⚠️ Error processing post {post.id}: {str(e)}")
 
     print(f"\n🎉 Completed: {processed}/{target} videos processed")
