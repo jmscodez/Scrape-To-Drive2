@@ -10,10 +10,12 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# ------------------ Google Drive Integration ------------------
+# ------------------ Configuration ------------------
 SCOPES = ['https://www.googleapis.com/auth/drive']
 SERVICE_ACCOUNT_INFO = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT'])
+VIDEO_DOMAINS = {'v.redd.it', 'youtube.com', 'youtu.be', 'streamable.com', 'gfycat.com', 'imgur.com'}
 
+# ------------------ Google Drive ------------------
 def authenticate_drive():
     credentials = service_account.Credentials.from_service_account_info(
         SERVICE_ACCOUNT_INFO, scopes=SCOPES
@@ -23,51 +25,29 @@ def authenticate_drive():
 def get_or_create_folder(drive_service, folder_name):
     query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
     results = drive_service.files().list(q=query, fields="files(id)").execute()
-    items = results.get('files', [])
-    
-    if items:
-        return items[0]['id']
-    else:
-        folder = drive_service.files().create(
-            body={'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'},
-            fields='id'
-        ).execute()
-        return folder['id']
+    return results['files'][0]['id'] if results['files'] else drive_service.files().create(
+        body={'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'},
+        fields='id'
+    ).execute()['id']
 
 def upload_to_drive(drive_service, folder_id, file_path):
     try:
-        if not os.path.exists(file_path):
-            print(f"❌ File not found: {file_path}")
-            return False
-
         file_name = os.path.basename(file_path)
-        media = MediaFileUpload(file_path)
-        
+        media = MediaFileUpload(file_path, resumable=True)
         file = drive_service.files().create(
-            body={
-                'name': file_name,
-                'parents': [folder_id]
-            },
+            body={'name': file_name, 'parents': [folder_id]},
             media_body=media,
-            fields='id'
+            fields='id,webViewLink'
         ).execute()
-        
-        print(f"✅ Upload confirmed: {file_name} (ID: {file.get('id')})")
+        print(f"✅ GENUINE UPLOAD: {file_name} | Drive Link: {file.get('webViewLink')}")
         return True
-        
     except Exception as e:
-        print(f"❌ Upload failed: {str(e)}")
+        print(f"❌ UPLOAD FAILED: {str(e)}")
         return False
 
 # ------------------ Video Processing ------------------
-VIDEO_DOMAINS = {
-    'v.redd.it', 'youtube.com', 'youtu.be',
-    'streamable.com', 'gfycat.com', 'imgur.com'
-}
-
 def sanitize_filename(filename):
-    filename = re.sub(r'[\\/*?:"<>|]', "", filename)
-    return filename[:100].strip()
+    return re.sub(r'[\\/*?:"<>|]', "", filename)[:100].strip()
 
 def download_video(url):
     try:
@@ -76,34 +56,38 @@ def download_video(url):
             'format': 'bestvideo[height<=1080]+bestaudio/best',
             'merge_output_format': 'mp4',
             'quiet': True,
-            # REMOVED COOKIES FOR NOW
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Referer': 'https://www.reddit.com/'
+                'Referer': 'https://www.reddit.com/',
+                'Accept-Language': 'en-US,en;q=0.9'
             },
             'extractor_args': {
-                'reddit': {'skip_auth': True}
-            }
+                'reddit': {'skip_auth': True},
+                'youtube': {'skip': ['dash', 'hls']}
+            },
+            'retries': 3,
+            'fragment_retries': 3,
+            'skip_unavailable_fragments': True
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            downloaded_file = ydl.prepare_filename(info)
+            file_path = ydl.prepare_filename(info)
             
+            # Verify audio track exists
             result = subprocess.run(
                 ['ffprobe', '-loglevel', 'error', '-select_streams', 'a',
-                 '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', downloaded_file],
+                 '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file_path],
                 stdout=subprocess.PIPE,
                 text=True
             )
             if 'audio' not in result.stdout:
-                print("⚠️ Skipping: No audio track found")
-                os.remove(downloaded_file)
-                return None, 0
-            return downloaded_file, info.get('duration', 0)
+                raise Exception("No audio track found")
+                
+            return file_path, info.get('duration', 0)
             
     except Exception as e:
-        print(f"❌ Download failed: {str(e)}")
+        print(f"❌ DOWNLOAD FAILED: {url} | Error: {str(e)}")
         return None, 0
 
 def convert_to_tiktok(video_path):
@@ -113,19 +97,18 @@ def convert_to_tiktok(video_path):
             'ffmpeg', '-i', video_path,
             '-vf', 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1',
             '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-            '-c:a', 'aac', '-y', output_path
+            '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
+            '-y', output_path
         ], check=True)
         return output_path
     except Exception as e:
-        print(f"❌ Conversion failed: {str(e)}")
+        print(f"❌ CONVERSION FAILED: {str(e)}")
         return None
 
-# ------------------ OpenRouter API ------------------
+# ------------------ Caption Generation ------------------
 def generate_headline(post_title):
     try:
-        truncated_title = post_title[:200]
-        prompt = f"Create viral NFL TikTok caption from: {truncated_title}"
-        
+        prompt = f"Create a short, engaging NFL TikTok caption (under 100 chars) from: {post_title[:200]}"
         headers = {
             "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
             "Content-Type": "application/json"
@@ -133,89 +116,86 @@ def generate_headline(post_title):
         payload = {
             "model": "google/gemma-2-9b-it",
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 100
+            "max_tokens": 100,
+            "temperature": 0.7
         }
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions", 
-                               json=payload, 
-                               headers=headers)
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=30
+        )
         response.raise_for_status()
         return response.json()['choices'][0]['message']['content'].strip()[:100]
     except Exception as e:
-        print(f"⚠️ Headline generation failed: {str(e)}")
+        print(f"⚠️ CAPTION FAILED: {str(e)}")
         return sanitize_filename(post_title)[:100]
 
-# ------------------ Main Process ------------------
-reddit = praw.Reddit(
-    client_id=os.environ['REDDIT_CLIENT_ID'],
-    client_secret=os.environ['REDDIT_CLIENT_SECRET'],
-    user_agent="script:mybot:v1.0 (by /u/Proof_Difficulty_396)"
-)
-
-if __name__ == "__main__":
-    processed = 0
-    target = 3  # Reduced target for testing
+# ------------------ Main Execution ------------------
+def main():
+    reddit = praw.Reddit(
+        client_id=os.environ['REDDIT_CLIENT_ID'],
+        client_secret=os.environ['REDDIT_CLIENT_SECRET'],
+        user_agent="script:mybot:v1.0 (by /u/Proof_Difficulty_396)"
+    )
     
     drive_service = authenticate_drive()
     folder_id = get_or_create_folder(drive_service, "NFL Videos")
-
+    
     print("\n" + "="*40)
-    print(f"🚀 Processing {target} NFL videos")
+    print(f"🚀 Starting NFL video processing")
     print("="*40)
-
-    subreddits = ['nfl']  # Only using main subreddit for now
-    for subreddit in subreddits:
+    
+    processed = 0
+    target = 3
+    
+    for post in reddit.subreddit("nfl").hot(limit=50):
         if processed >= target:
             break
             
         try:
-            for post in reddit.subreddit(subreddit).hot(limit=25):  # Changed from .top() to .hot()
-                if processed >= target:
-                    break
-                    
-                try:
-                    print(f"\n=== Processing: r/{subreddit} - {post.title[:50]}... ===")
-                    
-                    # Skip text posts and unsupported domains
-                    if not any(domain in post.url for domain in VIDEO_DOMAINS):
-                        print(f"⚠️ Skipping: Unsupported URL - {post.url}")
-                        continue
-                        
-                    video_path, duration = download_video(post.url)
-                    if not video_path or not (10 <= duration <= 180):
-                        if video_path:
-                            os.remove(video_path)
-                        continue
-                    
-                    vertical_path = convert_to_tiktok(video_path)
-                    os.remove(video_path)
-                    
-                    if vertical_path:
-                        headline = generate_headline(post.title)
-                        sanitized_headline = sanitize_filename(headline)
-                        final_path = f"{sanitized_headline}.mp4"
-                        os.rename(vertical_path, final_path)
-                        
-                        if upload_to_drive(drive_service, folder_id, final_path):
-                            processed += 1
-                            print(f"✅ Success: {sanitized_headline}")
-                        else:
-                            print(f"❌ Upload failed for: {sanitized_headline}")
-                        
-                        if os.path.exists(final_path):
-                            os.remove(final_path)
-                        
-                        time.sleep(2)  # Rate limiting
-
-                except Exception as e:
-                    print(f"⚠️ Error processing post: {str(e)}")
-
-        except prawcore.exceptions.NotFound:
-            print("⚠️ Subreddit not found or inaccessible")
-            continue
+            # Skip non-video posts
+            if not any(domain in post.url for domain in VIDEO_DOMAINS):
+                continue
+                
+            print(f"\n📌 Processing: {post.title[:60]}...")
+            
+            # Download video
+            video_path, duration = download_video(post.url)
+            if not video_path or not (10 <= duration <= 180):
+                continue
+                
+            # Convert format
+            vertical_path = convert_to_tiktok(video_path)
+            os.remove(video_path)
+            if not vertical_path:
+                continue
+                
+            # Generate caption and finalize
+            caption = generate_headline(post.title)
+            final_name = sanitize_filename(caption) + ".mp4"
+            os.rename(vertical_path, final_name)
+            
+            # Upload to Drive
+            if upload_to_drive(drive_service, folder_id, final_name):
+                processed += 1
+                print(f"✅ SUCCESS: {final_name}")
+            else:
+                print(f"❌ UPLOAD FAILED: {final_name}")
+                
+            # Cleanup
+            if os.path.exists(final_name):
+                os.remove(final_name)
+                
+            time.sleep(5)  # Rate limiting
+                
         except Exception as e:
-            print(f"⚠️ Error accessing subreddit: {str(e)}")
+            print(f"⚠️ PROCESSING ERROR: {str(e)}")
             continue
 
     print("\n" + "="*40)
-    print(f"🎉 Completed: {processed}/{target} NFL videos")
+    print(f"🎉 Completed: {processed}/{target} videos processed")
     print("="*40)
+
+if __name__ == "__main__":
+    main()
