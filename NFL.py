@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import subprocess
 import json
 import praw
@@ -34,13 +35,33 @@ def get_or_create_folder(drive_service, folder_name):
         return folder['id']
 
 def upload_to_drive(drive_service, folder_id, file_path):
-    file_name = os.path.basename(file_path)
-    media = MediaFileUpload(file_path)
-    drive_service.files().create(
-        body={'name': file_name, 'parents': [folder_id]},
-        media_body=media
-    ).execute()
-    print(f"Uploaded {file_name} to Google Drive")
+    try:
+        if not os.path.exists(file_path):
+            print(f"❌ File not found: {file_path}")
+            return False
+
+        file_name = os.path.basename(file_path)
+        print(f"📤 Uploading {file_name} ({os.path.getsize(file_path)/1024/1024:.2f} MB)")
+
+        media = MediaFileUpload(file_path, resumable=True, chunksize=1024*1024)
+        request = drive_service.files().create(
+            body={'name': file_name, 'parents': [folder_id]},
+            media_body=media,
+            fields='id,size'
+        )
+        
+        response = None
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                print(f"↗️ Progress: {int(status.progress() * 100)}%")
+        
+        print(f"✅ Successfully uploaded {file_name} (ID: {response['id']}, Size: {int(response.get('size',0)/1024/1024:.2f} MB)")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Upload failed: {str(e)}")
+        return False
 
 # ------------------ Video Processing ------------------
 VIDEO_DOMAINS = {
@@ -51,10 +72,8 @@ VIDEO_DOMAINS = {
 }
 
 def sanitize_filename(filename):
-    """Sanitize the filename to avoid issues with long names and special characters"""
     filename = re.sub(r'[\\/*?:"<>|]', "", filename)
-    filename = filename[:100]  # Limit filename length
-    return filename.strip()
+    return filename[:100].strip()
 
 def download_video(url):
     try:
@@ -63,7 +82,7 @@ def download_video(url):
             'format': 'bestvideo[height<=1080]+bestaudio/best',
             'merge_output_format': 'mp4',
             'quiet': True,
-            'cookiefile': 'cookies.txt',  # Using cookies for authentication
+            'cookiefile': 'cookies.txt',
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 'Referer': 'https://www.reddit.com/',
@@ -74,14 +93,13 @@ def download_video(url):
                 'youtube': {'skip': ['dash', 'hls']},
                 'twitter': {'include': ['native_video']}
             },
-            'sleep_interval': 5  # Delay between requests
+            'sleep_interval': 5
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             downloaded_file = ydl.prepare_filename(info)
             
-            # Verify the file has audio
             result = subprocess.run(
                 ['ffprobe', '-loglevel', 'error', '-select_streams', 'a',
                  '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', downloaded_file],
@@ -95,7 +113,7 @@ def download_video(url):
             return downloaded_file, info.get('duration', 0)
             
     except Exception as e:
-        print(f"❌ Download failed for {url}: {str(e)}")
+        print(f"❌ Download failed: {str(e)}")
         return None, 0
 
 def convert_to_tiktok(video_path):
@@ -113,25 +131,21 @@ def convert_to_tiktok(video_path):
         print(f"❌ Conversion failed: {str(e)}")
         return None
 
-# ------------------ OpenRouter API (From NBA.py) ------------------
+# ------------------ OpenRouter API ------------------
 def generate_headline(post_title):
     try:
-        # Truncate the title to avoid hitting token limits
         truncated_title = post_title[:200]
         prompt = (
-            "Your job is to take captions that I give you and turn them into a headline that would be used on a TikTok video. "
-            "I will give you the input at the end, your output should ONLY be the new title. "
-            "There should be nothing else besides the caption as your output. Here are some rules to follow:\n"
-            "1. It should be the text at the top or bottom of the video that explains what's happening in the video.\n"
-            "2. It should be tailored for TikTok SEO.\n"
-            "3. Remove any '_VERTICAL.mp4' text if present.\n"
-            "4. Use a max of 2 emojis.\n"
-            "5. NO HASHTAGS.\n"
-            "6. If a name is included, keep the name in the caption.\n\n"
-            "Here is an example input and output:\n\n"
-            "Input: '[Highlight] Patrick Mahomes throws a dime against the Ravens_VERTICAL'\n"
-            "Output: 'Mahomes DROPS A DIME vs Ravens! 🏈🔥'\n\n"
-            f"Now create a TikTok caption for this NFL content: '{truncated_title}'"
+            "Create a viral NFL TikTok caption (under 100 chars) from this:\n"
+            f"'{truncated_title}'\n\n"
+            "Rules:\n"
+            "- No hashtags\n"
+            "- Max 2 emojis\n"
+            "- Keep player names\n"
+            "- Exciting tone\n\n"
+            "Example:\n"
+            "Input: 'Mahomes crazy no-look pass vs Raiders'\n"
+            "Output: 'Mahomes with the NO-LOOK DIME! 🏈🔥'"
         )
         
         headers = {
@@ -142,7 +156,7 @@ def generate_headline(post_title):
             "model": "google/gemma-2-9b-it",
             "messages": [{
                 "role": "system", 
-                "content": "You are a social media expert who creates viral TikTok captions for NFL content."
+                "content": "You create viral NFL TikTok captions"
             }, {
                 "role": "user", 
                 "content": prompt
@@ -151,18 +165,19 @@ def generate_headline(post_title):
             "temperature": 0.7
         }
         
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions", 
+                               json=payload, 
+                               headers=headers,
+                               timeout=30)
         response.raise_for_status()
         
-        # Extract and clean the response
         caption = response.json()['choices'][0]['message']['content'].strip()
-        caption = re.sub(r'_VERTICAL\.mp4', '', caption)  # Remove any remaining _VERTICAL.mp4
-        caption = re.sub(r'#\w+', '', caption)  # Remove any hashtags
-        return caption[:150]  # Ensure we don't return overly long captions
+        caption = re.sub(r'_VERTICAL\.mp4|#\w+', '', caption)
+        return caption[:150]
         
     except Exception as e:
         print(f"⚠️ Headline generation failed: {str(e)}")
-        return sanitize_filename(post_title)[:100]  # Fallback to sanitized title
+        return sanitize_filename(post_title)[:100]
 
 # ------------------ Main Process ------------------
 reddit = praw.Reddit(
@@ -173,16 +188,20 @@ reddit = praw.Reddit(
 
 if __name__ == "__main__":
     processed = 0
-    target = 3  # Targeting 3 NFL videos per run
+    target = 5
     
+    # Initialize services
     drive_service = authenticate_drive()
     folder_id = get_or_create_folder(drive_service, "NFL Videos")
+    
+    # Verify drive access
+    about = drive_service.about().get(fields='storageQuota').execute()
+    print(f"🔍 Drive Storage: {about['storageQuota'].get('usage', '?')} / {about['storageQuota'].get('limit', '?')} bytes used")
 
     print("\n" + "="*40)
-    print(f"🚀 Processing {target} videos from NFL subreddits")
+    print(f"🚀 Processing {target} NFL videos")
     print("="*40)
 
-    # Scrape multiple NFL-related subreddits
     subreddits = ['nfl', 'nflclips', 'footballhighlights']
     for subreddit in subreddits:
         if processed >= target:
@@ -193,24 +212,20 @@ if __name__ == "__main__":
                 break
                 
             try:
-                print(f"\n=== Processing from r/{subreddit}: {post.title[:50]}... ===")
+                print(f"\n📭 Processing: r/{subreddit} - {post.title[:50]}...")
                 
-                # Skip if not a video domain
                 if not any(domain in post.url for domain in VIDEO_DOMAINS):
-                    print(f"⚠️ Skipping: Unsupported URL - {post.url}")
+                    print(f"⚠️ Unsupported URL: {post.url}")
                     continue
                     
                 video_path, duration = download_video(post.url)
-                if not video_path:
-                    continue
-                    
-                if not (10 <= duration <= 180):
-                    print(f"⚠️ Skipping: Duration {duration}s out of range")
-                    os.remove(video_path)
+                if not video_path or not (10 <= duration <= 180):
+                    if video_path:
+                        os.remove(video_path)
                     continue
                 
                 vertical_path = convert_to_tiktok(video_path)
-                os.remove(video_path)  # Clean up original video
+                os.remove(video_path)
                 
                 if vertical_path:
                     headline = generate_headline(post.title)
@@ -218,14 +233,20 @@ if __name__ == "__main__":
                     final_path = f"{sanitized_headline}.mp4"
                     os.rename(vertical_path, final_path)
                     
-                    upload_to_drive(drive_service, folder_id, final_path)
-                    os.remove(final_path)
-                    processed += 1
-                    print(f"✅ Success: {sanitized_headline}")
+                    if upload_to_drive(drive_service, folder_id, final_path):
+                        processed += 1
+                        print(f"🏈 Success: {sanitized_headline}")
+                    else:
+                        print(f"❌ Upload failed for: {sanitized_headline}")
+                    
+                    if os.path.exists(final_path):
+                        os.remove(final_path)
+                    
+                    time.sleep(5)  # Rate limit
 
             except Exception as e:
-                print(f"⚠️ Error processing post {post.id}: {str(e)}")
+                print(f"⚠️ Error processing post: {str(e)}")
 
     print("\n" + "="*40)
-    print(f"🎉 Completed: {processed}/{target} NFL videos processed")
+    print(f"🎉 Completed: {processed}/{target} NFL videos uploaded")
     print("="*40)
