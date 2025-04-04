@@ -41,27 +41,23 @@ def upload_to_drive(drive_service, folder_id, file_path):
             return False
 
         file_name = os.path.basename(file_path)
-        file_size = os.path.getsize(file_path)/1024/1024  # Size in MB
-        print(f"📤 Uploading {file_name} ({file_size:.2f} MB)")
-
-        media = MediaFileUpload(file_path, resumable=True, chunksize=1024*1024)
-        request = drive_service.files().create(
-            body={'name': file_name, 'parents': [folder_id]},
+        media = MediaFileUpload(file_path)
+        
+        # EXACT UPLOAD METHOD FROM WORKING NBA.PY
+        file = drive_service.files().create(
+            body={
+                'name': file_name,
+                'parents': [folder_id]
+            },
             media_body=media,
-            fields='id,size'
-        )
+            fields='id'
+        ).execute()
         
-        response = None
-        while response is None:
-            status, response = request.next_chunk()
-            if status:
-                print(f"↗️ Progress: {int(status.progress() * 100)}%")
-        
-        print(f"✅ Successfully uploaded {file_name} (ID: {response['id']}, Size: {int(response.get('size',0))/1024/1024:.2f} MB)")
+        print(f"✅ GENUINE Upload confirmed: {file_name} (ID: {file.get('id')})")
         return True
         
     except Exception as e:
-        print(f"❌ Upload failed: {str(e)}")
+        print(f"❌ REAL Upload failed: {str(e)}")
         return False
 
 # ------------------ Video Processing ------------------
@@ -86,15 +82,11 @@ def download_video(url):
             'cookiefile': 'cookies.txt',
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Referer': 'https://www.reddit.com/',
-                'Origin': 'https://www.reddit.com'
+                'Referer': 'https://www.reddit.com/'
             },
             'extractor_args': {
-                'reddit': {'skip_auth': True},
-                'youtube': {'skip': ['dash', 'hls']},
-                'twitter': {'include': ['native_video']}
-            },
-            'sleep_interval': 5
+                'reddit': {'skip_auth': True}
+            }
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -124,8 +116,7 @@ def convert_to_tiktok(video_path):
             'ffmpeg', '-i', video_path,
             '-vf', 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1',
             '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-            '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
-            '-y', output_path
+            '-c:a', 'aac', '-y', output_path
         ], check=True)
         return output_path
     except Exception as e:
@@ -136,18 +127,7 @@ def convert_to_tiktok(video_path):
 def generate_headline(post_title):
     try:
         truncated_title = post_title[:200]
-        prompt = (
-            "Create a viral NFL TikTok caption (under 100 chars) from this:\n"
-            f"'{truncated_title}'\n\n"
-            "Rules:\n"
-            "- No hashtags\n"
-            "- Max 2 emojis\n"
-            "- Keep player names\n"
-            "- Exciting tone\n\n"
-            "Example:\n"
-            "Input: 'Mahomes crazy no-look pass vs Raiders'\n"
-            "Output: 'Mahomes with the NO-LOOK DIME! 🏈🔥'"
-        )
+        prompt = f"Create viral NFL TikTok caption from: {truncated_title}"
         
         headers = {
             "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
@@ -155,27 +135,14 @@ def generate_headline(post_title):
         }
         payload = {
             "model": "google/gemma-2-9b-it",
-            "messages": [{
-                "role": "system", 
-                "content": "You create viral NFL TikTok captions"
-            }, {
-                "role": "user", 
-                "content": prompt
-            }],
-            "max_tokens": 100,
-            "temperature": 0.7
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 100
         }
-        
         response = requests.post("https://openrouter.ai/api/v1/chat/completions", 
                                json=payload, 
-                               headers=headers,
-                               timeout=30)
+                               headers=headers)
         response.raise_for_status()
-        
-        caption = response.json()['choices'][0]['message']['content'].strip()
-        caption = re.sub(r'_VERTICAL\.mp4|#\w+', '', caption)
-        return caption[:150]
-        
+        return response.json()['choices'][0]['message']['content'].strip()[:100]
     except Exception as e:
         print(f"⚠️ Headline generation failed: {str(e)}")
         return sanitize_filename(post_title)[:100]
@@ -189,15 +156,10 @@ reddit = praw.Reddit(
 
 if __name__ == "__main__":
     processed = 0
-    target = 5
+    target = 3
     
-    # Initialize services
     drive_service = authenticate_drive()
     folder_id = get_or_create_folder(drive_service, "NFL Videos")
-    
-    # Verify drive access
-    about = drive_service.about().get(fields='storageQuota').execute()
-    print(f"🔍 Drive Storage: {about['storageQuota'].get('usage', '?')} / {about['storageQuota'].get('limit', '?')} bytes used")
 
     print("\n" + "="*40)
     print(f"🚀 Processing {target} NFL videos")
@@ -213,10 +175,10 @@ if __name__ == "__main__":
                 break
                 
             try:
-                print(f"\n📭 Processing: r/{subreddit} - {post.title[:50]}...")
+                print(f"\n=== Processing: r/{subreddit} - {post.title[:50]}... ===")
                 
                 if not any(domain in post.url for domain in VIDEO_DOMAINS):
-                    print(f"⚠️ Unsupported URL: {post.url}")
+                    print(f"⚠️ Skipping: Unsupported URL - {post.url}")
                     continue
                     
                 video_path, duration = download_video(post.url)
@@ -234,20 +196,21 @@ if __name__ == "__main__":
                     final_path = f"{sanitized_headline}.mp4"
                     os.rename(vertical_path, final_path)
                     
+                    # VERBOSE UPLOAD CONFIRMATION
                     if upload_to_drive(drive_service, folder_id, final_path):
                         processed += 1
-                        print(f"🏈 Success: {sanitized_headline}")
+                        print(f"✅ GENUINE Upload Success: {sanitized_headline}")
                     else:
-                        print(f"❌ Upload failed for: {sanitized_headline}")
+                        print(f"❌ REAL Upload Failed: {sanitized_headline}")
                     
                     if os.path.exists(final_path):
                         os.remove(final_path)
                     
-                    time.sleep(5)  # Rate limit
+                    time.sleep(2)  # Rate limiting
 
             except Exception as e:
                 print(f"⚠️ Error processing post: {str(e)}")
 
     print("\n" + "="*40)
-    print(f"🎉 Completed: {processed}/{target} NFL videos uploaded")
+    print(f"🎉 Completed: {processed}/{target} NFL videos")
     print("="*40)
