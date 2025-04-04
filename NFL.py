@@ -41,7 +41,8 @@ def upload_to_drive(drive_service, folder_id, file_path):
             return False
 
         file_name = os.path.basename(file_path)
-        print(f"📤 Uploading {file_name} ({os.path.getsize(file_path)/1024/1024:.2f} MB)")
+        file_size = os.path.getsize(file_path)/1024/1024  # Size in MB
+        print(f"📤 Uploading {file_name} ({file_size:.2f} MB)")
 
         media = MediaFileUpload(file_path, resumable=True, chunksize=1024*1024)
         request = drive_service.files().create(
@@ -56,7 +57,7 @@ def upload_to_drive(drive_service, folder_id, file_path):
             if status:
                 print(f"↗️ Progress: {int(status.progress() * 100)}%")
         
-        print(f"✅ Successfully uploaded {file_name} (ID: {response['id']}, Size: {int(response.get('size',0)/1024/1024:.2f} MB)")
+        print(f"✅ Successfully uploaded {file_name} (ID: {response['id']}, Size: {int(response.get('size',0))/1024/1024:.2f} MB)")
         return True
         
     except Exception as e:
