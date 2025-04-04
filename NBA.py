@@ -115,16 +115,21 @@ def generate_headline(post_title):
     try:
         # Truncate the title to avoid hitting token limits
         truncated_title = post_title[:200]
-        prompt = "Your job is to take captions that I give you and turn them into a headline that would be used on a TikTok video. I will give you the input at the end, your output"
-        "should ONLY be the new title. There should be nothing else besides the caption as your output. Here are some rule to follow:\n"
-        "It should be the text at the top or bottom of the video that explains what's happening in the video. "
-        "It should be tailored for TikTok SEO. You should also always remove the _VERTICAL.mp4. We want a max of 2 emojis, and NO HASHTAGS. "
-        "If a name is included, you should keep the name in the caption. "
-        "Here is an example input and output:\n\n"
-        "Input: '[Highlight] Cam Ward throws a dime at Miami Pro Day_VERTICAL'\n"
-
-        "Output: 'Cam Ward Drops a DIME at Miami Pro Day'\n\n"
-        f"Here is the Input: '{truncated_title}"
+        prompt = (
+            "Your job is to take captions that I give you and turn them into a headline that would be used on a TikTok video. "
+            "I will give you the input at the end, your output should ONLY be the new title. "
+            "There should be nothing else besides the caption as your output. Here are some rules to follow:\n"
+            "1. It should be the text at the top or bottom of the video that explains what's happening in the video.\n"
+            "2. It should be tailored for TikTok SEO.\n"
+            "3. Remove any '_VERTICAL.mp4' text if present.\n"
+            "4. Use a max of 2 emojis.\n"
+            "5. NO HASHTAGS.\n"
+            "6. If a name is included, keep the name in the caption.\n\n"
+            "Here is an example input and output:\n\n"
+            "Input: '[Highlight] Cam Ward throws a dime at Miami Pro Day_VERTICAL'\n"
+            "Output: 'Cam Ward Drops a DIME at Miami Pro Day 🏈🔥'\n\n"
+            f"Now create a TikTok caption for this content: '{truncated_title}'"
+        )
         
         headers = {
             "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
@@ -132,15 +137,29 @@ def generate_headline(post_title):
         }
         payload = {
             "model": "google/gemma-2-9b-it",
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 100
+            "messages": [{
+                "role": "system", 
+                "content": "You are a social media expert who creates viral TikTok captions for NBA content."
+            }, {
+                "role": "user", 
+                "content": prompt
+            }],
+            "max_tokens": 100,
+            "temperature": 0.7
         }
+        
         response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
         response.raise_for_status()
-        return response.json()['choices'][0]['message']['content'].strip()
+        
+        # Extract and clean the response
+        caption = response.json()['choices'][0]['message']['content'].strip()
+        caption = re.sub(r'_VERTICAL\.mp4', '', caption)  # Remove any remaining _VERTICAL.mp4
+        caption = re.sub(r'#\w+', '', caption)  # Remove any hashtags
+        return caption[:150]  # Ensure we don't return overly long captions
+        
     except Exception as e:
         print(f"⚠️ Headline generation failed: {str(e)}")
-        return post_title[:100]  # Fallback to truncated title
+        return sanitize_filename(post_title)[:100]  # Fallback to sanitized title
 
 # ------------------ Main Process ------------------
 reddit = praw.Reddit(
