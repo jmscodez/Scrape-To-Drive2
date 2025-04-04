@@ -120,7 +120,8 @@ def generate_headline(caption):
 reddit = praw.Reddit(
     client_id=os.environ['REDDIT_CLIENT_ID'],
     client_secret=os.environ['REDDIT_CLIENT_SECRET'],
-    user_agent="script:mybot:v1.0 (by /u/Proof_Difficulty_396)"
+    user_agent="script:RedditVideoBot:v1.0 (by /u/Proof_Difficulty_396)",  # Must follow Reddit's format
+    check_for_async=False  # Add this line
 )
 
 if __name__ == "__main__":
