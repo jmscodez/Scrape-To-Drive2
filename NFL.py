@@ -43,7 +43,6 @@ def upload_to_drive(drive_service, folder_id, file_path):
         file_name = os.path.basename(file_path)
         media = MediaFileUpload(file_path)
         
-        # EXACT UPLOAD METHOD FROM WORKING NBA.PY
         file = drive_service.files().create(
             body={
                 'name': file_name,
@@ -53,19 +52,17 @@ def upload_to_drive(drive_service, folder_id, file_path):
             fields='id'
         ).execute()
         
-        print(f"✅ GENUINE Upload confirmed: {file_name} (ID: {file.get('id')})")
+        print(f"✅ Upload confirmed: {file_name} (ID: {file.get('id')})")
         return True
         
     except Exception as e:
-        print(f"❌ REAL Upload failed: {str(e)}")
+        print(f"❌ Upload failed: {str(e)}")
         return False
 
 # ------------------ Video Processing ------------------
 VIDEO_DOMAINS = {
-    'reddit.com', 'v.redd.it', 'youtube.com', 'youtu.be',
-    'streamable.com', 'gfycat.com', 'imgur.com', 'tiktok.com',
-    'instagram.com', 'twitter.com', 'x.com', 'twitch.tv',
-    'dailymotion.com', 'rumble.com'
+    'v.redd.it', 'youtube.com', 'youtu.be',
+    'streamable.com', 'gfycat.com', 'imgur.com'
 }
 
 def sanitize_filename(filename):
@@ -79,7 +76,7 @@ def download_video(url):
             'format': 'bestvideo[height<=1080]+bestaudio/best',
             'merge_output_format': 'mp4',
             'quiet': True,
-            'cookiefile': 'cookies.txt',
+            # REMOVED COOKIES FOR NOW
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 'Referer': 'https://www.reddit.com/'
@@ -156,7 +153,7 @@ reddit = praw.Reddit(
 
 if __name__ == "__main__":
     processed = 0
-    target = 3
+    target = 3  # Reduced target for testing
     
     drive_service = authenticate_drive()
     folder_id = get_or_create_folder(drive_service, "NFL Videos")
@@ -165,51 +162,59 @@ if __name__ == "__main__":
     print(f"🚀 Processing {target} NFL videos")
     print("="*40)
 
-    subreddits = ['nfl', 'nflclips', 'footballhighlights']
+    subreddits = ['nfl']  # Only using main subreddit for now
     for subreddit in subreddits:
         if processed >= target:
             break
             
-        for post in reddit.subreddit(subreddit).top(time_filter="day", limit=25):
-            if processed >= target:
-                break
-                
-            try:
-                print(f"\n=== Processing: r/{subreddit} - {post.title[:50]}... ===")
-                
-                if not any(domain in post.url for domain in VIDEO_DOMAINS):
-                    print(f"⚠️ Skipping: Unsupported URL - {post.url}")
-                    continue
+        try:
+            for post in reddit.subreddit(subreddit).hot(limit=25):  # Changed from .top() to .hot()
+                if processed >= target:
+                    break
                     
-                video_path, duration = download_video(post.url)
-                if not video_path or not (10 <= duration <= 180):
-                    if video_path:
-                        os.remove(video_path)
-                    continue
-                
-                vertical_path = convert_to_tiktok(video_path)
-                os.remove(video_path)
-                
-                if vertical_path:
-                    headline = generate_headline(post.title)
-                    sanitized_headline = sanitize_filename(headline)
-                    final_path = f"{sanitized_headline}.mp4"
-                    os.rename(vertical_path, final_path)
+                try:
+                    print(f"\n=== Processing: r/{subreddit} - {post.title[:50]}... ===")
                     
-                    # VERBOSE UPLOAD CONFIRMATION
-                    if upload_to_drive(drive_service, folder_id, final_path):
-                        processed += 1
-                        print(f"✅ GENUINE Upload Success: {sanitized_headline}")
-                    else:
-                        print(f"❌ REAL Upload Failed: {sanitized_headline}")
+                    # Skip text posts and unsupported domains
+                    if not any(domain in post.url for domain in VIDEO_DOMAINS):
+                        print(f"⚠️ Skipping: Unsupported URL - {post.url}")
+                        continue
+                        
+                    video_path, duration = download_video(post.url)
+                    if not video_path or not (10 <= duration <= 180):
+                        if video_path:
+                            os.remove(video_path)
+                        continue
                     
-                    if os.path.exists(final_path):
-                        os.remove(final_path)
+                    vertical_path = convert_to_tiktok(video_path)
+                    os.remove(video_path)
                     
-                    time.sleep(2)  # Rate limiting
+                    if vertical_path:
+                        headline = generate_headline(post.title)
+                        sanitized_headline = sanitize_filename(headline)
+                        final_path = f"{sanitized_headline}.mp4"
+                        os.rename(vertical_path, final_path)
+                        
+                        if upload_to_drive(drive_service, folder_id, final_path):
+                            processed += 1
+                            print(f"✅ Success: {sanitized_headline}")
+                        else:
+                            print(f"❌ Upload failed for: {sanitized_headline}")
+                        
+                        if os.path.exists(final_path):
+                            os.remove(final_path)
+                        
+                        time.sleep(2)  # Rate limiting
 
-            except Exception as e:
-                print(f"⚠️ Error processing post: {str(e)}")
+                except Exception as e:
+                    print(f"⚠️ Error processing post: {str(e)}")
+
+        except prawcore.exceptions.NotFound:
+            print("⚠️ Subreddit not found or inaccessible")
+            continue
+        except Exception as e:
+            print(f"⚠️ Error accessing subreddit: {str(e)}")
+            continue
 
     print("\n" + "="*40)
     print(f"🎉 Completed: {processed}/{target} NFL videos")
