@@ -13,7 +13,12 @@ from googleapiclient.http import MediaFileUpload
 # ------------------ Configuration ------------------
 SCOPES = ['https://www.googleapis.com/auth/drive']
 SERVICE_ACCOUNT_INFO = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT'])
-VIDEO_DOMAINS = {'v.redd.it', 'youtube.com', 'youtu.be', 'streamable.com', 'gfycat.com', 'imgur.com'}
+VIDEO_DOMAINS = {
+    'reddit.com', 'v.redd.it', 'youtube.com', 'youtu.be',
+    'streamable.com', 'gfycat.com', 'imgur.com', 'tiktok.com',
+    'instagram.com', 'twitter.com', 'x.com', 'twitch.tv',
+    'dailymotion.com', 'rumble.com'
+}
 
 # ------------------ Google Drive ------------------
 def authenticate_drive():
@@ -25,25 +30,25 @@ def authenticate_drive():
 def get_or_create_folder(drive_service, folder_name):
     query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
     results = drive_service.files().list(q=query, fields="files(id)").execute()
-    return results['files'][0]['id'] if results['files'] else drive_service.files().create(
-        body={'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'},
-        fields='id'
-    ).execute()['id']
+    items = results.get('files', [])
+    
+    if items:
+        return items[0]['id']
+    else:
+        folder = drive_service.files().create(
+            body={'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'},
+            fields='id'
+        ).execute()
+        return folder['id']
 
 def upload_to_drive(drive_service, folder_id, file_path):
-    try:
-        file_name = os.path.basename(file_path)
-        media = MediaFileUpload(file_path, resumable=True)
-        file = drive_service.files().create(
-            body={'name': file_name, 'parents': [folder_id]},
-            media_body=media,
-            fields='id,webViewLink'
-        ).execute()
-        print(f"✅ GENUINE UPLOAD: {file_name} | Drive Link: {file.get('webViewLink')}")
-        return True
-    except Exception as e:
-        print(f"❌ UPLOAD FAILED: {str(e)}")
-        return False
+    file_name = os.path.basename(file_path)
+    media = MediaFileUpload(file_path)
+    drive_service.files().create(
+        body={'name': file_name, 'parents': [folder_id]},
+        media_body=media
+    ).execute()
+    print(f"Uploaded {file_name} to Google Drive")
 
 # ------------------ Video Processing ------------------
 def sanitize_filename(filename):
@@ -109,28 +114,53 @@ def convert_to_tiktok(video_path):
 # ------------------ Caption Generation ------------------
 def generate_headline(post_title):
     try:
-        prompt = f"Create a short, engaging NFL TikTok caption (under 100 chars) from: {post_title[:200]}"
+        # Truncate the title to avoid hitting token limits
+        truncated_title = post_title[:200]
+        prompt = (
+            "Your job is to take captions that I give you and turn them into a headline that would be used on a TikTok video. "
+            "I will give you the input at the end, your output should ONLY be the new title. "
+            "There should be nothing else besides the caption as your output. Here are some rules to follow:\n"
+            "1. It should be the text at the top or bottom of the video that explains what's happening in the video.\n"
+            "2. It should be tailored for TikTok SEO.\n"
+            "3. Remove any '_VERTICAL.mp4' text if present.\n"
+            "4. Use a max of 2 emojis.\n"
+            "5. NO HASHTAGS.\n"
+            "6. If a name is included, keep the name in the caption.\n\n"
+            "Here is an example input and output:\n\n"
+            "Input: '[Highlight] Cam Ward throws a dime at Miami Pro Day_VERTICAL'\n"
+            "Output: 'Cam Ward Drops a DIME at Miami Pro Day 🏈🔥'\n\n"
+            f"Now create a TikTok caption for this content: '{truncated_title}'"
+        )
+        
         headers = {
             "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
             "Content-Type": "application/json"
         }
         payload = {
             "model": "google/gemma-2-9b-it",
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [{
+                "role": "system", 
+                "content": "You are a social media expert who creates viral TikTok captions for NBA content."
+            }, {
+                "role": "user", 
+                "content": prompt
+            }],
             "max_tokens": 100,
             "temperature": 0.7
         }
-        response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            json=payload,
-            headers=headers,
-            timeout=30
-        )
+        
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
         response.raise_for_status()
-        return response.json()['choices'][0]['message']['content'].strip()[:100]
+        
+        # Extract and clean the response
+        caption = response.json()['choices'][0]['message']['content'].strip()
+        caption = re.sub(r'_VERTICAL\.mp4', '', caption)  # Remove any remaining _VERTICAL.mp4
+        caption = re.sub(r'#\w+', '', caption)  # Remove any hashtags
+        return caption[:150]  # Ensure we don't return overly long captions
+        
     except Exception as e:
-        print(f"⚠️ CAPTION FAILED: {str(e)}")
-        return sanitize_filename(post_title)[:100]
+        print(f"⚠️ Headline generation failed: {str(e)}")
+        return sanitize_filename(post_title)[:100]  # Fallback to sanitized title
 
 # ------------------ Main Execution ------------------
 def main():
