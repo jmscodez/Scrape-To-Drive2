@@ -59,20 +59,22 @@ def sanitize_filename(filename):
 def download_video(url):
     try:
         ydl_opts = {
-            'outtmpl': '%(id)s.%(ext)s',  # Use post ID instead of title to avoid long filenames
+            'outtmpl': '%(id)s.%(ext)s',
             'format': 'bestvideo[height<=1080]+bestaudio/best',
             'merge_output_format': 'mp4',
             'quiet': True,
+            'cookiefile': 'cookies.txt',  # Using cookies for authentication
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                              'AppleWebKit/537.36 (KHTML, like Gecko) '
-                              'Chrome/122.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Referer': 'https://www.reddit.com/',
+                'Origin': 'https://www.reddit.com'
             },
             'extractor_args': {
-                'reddit': {
-                    'skip_auth': True  # Skip authentication which might be causing JSON issues
-                }
-            }
+                'reddit': {'skip_auth': True},
+                'youtube': {'skip': ['dash', 'hls']},
+                'twitter': {'include': ['native_video']}
+            },
+            'sleep_interval': 5  # Delay between requests
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -103,14 +105,15 @@ def convert_to_tiktok(video_path):
             'ffmpeg', '-i', video_path,
             '-vf', 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1',
             '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-            '-c:a', 'aac', '-y', output_path
+            '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
+            '-y', output_path
         ], check=True)
         return output_path
     except Exception as e:
         print(f"❌ Conversion failed: {str(e)}")
         return None
 
-# ------------------ OpenRouter API ------------------
+# ------------------ OpenRouter API (From NBA.py) ------------------
 def generate_headline(post_title):
     try:
         # Truncate the title to avoid hitting token limits
@@ -126,9 +129,9 @@ def generate_headline(post_title):
             "5. NO HASHTAGS.\n"
             "6. If a name is included, keep the name in the caption.\n\n"
             "Here is an example input and output:\n\n"
-            "Input: '[Highlight] Cam Ward throws a dime at Miami Pro Day_VERTICAL'\n"
-            "Output: 'Cam Ward Drops a DIME at Miami Pro Day 🏈🔥'\n\n"
-            f"Now create a TikTok caption for this content: '{truncated_title}'"
+            "Input: '[Highlight] Patrick Mahomes throws a dime against the Ravens_VERTICAL'\n"
+            "Output: 'Mahomes DROPS A DIME vs Ravens! 🏈🔥'\n\n"
+            f"Now create a TikTok caption for this NFL content: '{truncated_title}'"
         )
         
         headers = {
@@ -170,39 +173,59 @@ reddit = praw.Reddit(
 
 if __name__ == "__main__":
     processed = 0
-    target = 3
+    target = 3  # Targeting 3 NFL videos per run
     
     drive_service = authenticate_drive()
-    folder_id = get_or_create_folder(drive_service, "Impulse")
+    folder_id = get_or_create_folder(drive_service, "NFL Videos")
 
-    for post in reddit.subreddit("NFL").top(time_filter="day", limit=50):
+    print("\n" + "="*40)
+    print(f"🚀 Processing {target} videos from NFL subreddits")
+    print("="*40)
+
+    # Scrape multiple NFL-related subreddits
+    subreddits = ['nfl', 'nflclips', 'footballhighlights']
+    for subreddit in subreddits:
         if processed >= target:
             break
             
-        try:
-            # Skip if not a video domain
-            if not any(domain in post.url for domain in VIDEO_DOMAINS):
-                continue
+        for post in reddit.subreddit(subreddit).top(time_filter="day", limit=25):
+            if processed >= target:
+                break
                 
-            video_path, duration = download_video(post.url)
-            if not video_path or not (10 <= duration <= 180):
-                continue
-
-            vertical_path = convert_to_tiktok(video_path)
-            os.remove(video_path)
-
-            if vertical_path:
-                headline = generate_headline(post.title)
-                sanitized_headline = sanitize_filename(headline)
-                final_path = f"{sanitized_headline}.mp4"
-                os.rename(vertical_path, final_path)
+            try:
+                print(f"\n=== Processing from r/{subreddit}: {post.title[:50]}... ===")
                 
-                upload_to_drive(drive_service, folder_id, final_path)
-                os.remove(final_path)
-                processed += 1
-                print(f"✅ Processed: {sanitized_headline}")
+                # Skip if not a video domain
+                if not any(domain in post.url for domain in VIDEO_DOMAINS):
+                    print(f"⚠️ Skipping: Unsupported URL - {post.url}")
+                    continue
+                    
+                video_path, duration = download_video(post.url)
+                if not video_path:
+                    continue
+                    
+                if not (10 <= duration <= 180):
+                    print(f"⚠️ Skipping: Duration {duration}s out of range")
+                    os.remove(video_path)
+                    continue
+                
+                vertical_path = convert_to_tiktok(video_path)
+                os.remove(video_path)  # Clean up original video
+                
+                if vertical_path:
+                    headline = generate_headline(post.title)
+                    sanitized_headline = sanitize_filename(headline)
+                    final_path = f"{sanitized_headline}.mp4"
+                    os.rename(vertical_path, final_path)
+                    
+                    upload_to_drive(drive_service, folder_id, final_path)
+                    os.remove(final_path)
+                    processed += 1
+                    print(f"✅ Success: {sanitized_headline}")
 
-        except Exception as e:
-            print(f"⚠️ Error processing post {post.id}: {str(e)}")
+            except Exception as e:
+                print(f"⚠️ Error processing post {post.id}: {str(e)}")
 
-    print(f"\n🎉 Completed: {processed}/{target} videos processed")
+    print("\n" + "="*40)
+    print(f"🎉 Completed: {processed}/{target} NFL videos processed")
+    print("="*40)
