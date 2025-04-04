@@ -1,5 +1,7 @@
 import os
 import re
+import time
+import random
 import subprocess
 import json
 import praw
@@ -49,51 +51,69 @@ VIDEO_DOMAINS = {
     'dailymotion.com', 'rumble.com'
 }
 
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
+]
+
 def sanitize_filename(filename):
     """Sanitize the filename to avoid issues with long names and special characters"""
     filename = re.sub(r'[\\/*?:"<>|]', "", filename)
     filename = filename[:100]  # Limit filename length
     return filename.strip()
 
-def download_video(url):
-    try:
-        ydl_opts = {
-            'outtmpl': '%(id)s.%(ext)s',  # Use post ID instead of title to avoid long filenames
-            'format': 'bestvideo[height<=1080]+bestaudio/best',
-            'merge_output_format': 'mp4',
-            'quiet': True,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                              'AppleWebKit/537.36 (KHTML, like Gecko) '
-                              'Chrome/122.0.0.0 Safari/537.36'
-            },
-            'extractor_args': {
-                'reddit': {
-                    'skip_auth': True  # Skip authentication which might be causing JSON issues
+def download_video(url, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            ydl_opts = {
+                'outtmpl': '%(id)s.%(ext)s',
+                'format': 'bestvideo[height<=1080]+bestaudio/best',
+                'merge_output_format': 'mp4',
+                'quiet': True,
+                'no_warnings': True,
+                'retries': 3,
+                'fragment_retries': 3,
+                'skip_unavailable_fragments': True,
+                'extractor_retries': 3,
+                'http_headers': {
+                    'User-Agent': random.choice(USER_AGENTS),
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Referer': 'https://www.reddit.com/'
+                },
+                'extractor_args': {
+                    'reddit': {'skip_auth': True},
+                    'youtube': {'skip': ['dash', 'hls']},
+                    'twitter': {'include': ['native_video']}
                 }
             }
-        }
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            downloaded_file = ydl.prepare_filename(info)
             
-            # Verify the file has audio
-            result = subprocess.run(
-                ['ffprobe', '-loglevel', 'error', '-select_streams', 'a',
-                 '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', downloaded_file],
-                stdout=subprocess.PIPE,
-                text=True
-            )
-            if 'audio' not in result.stdout:
-                print("⚠️ Skipping: No audio track found")
-                os.remove(downloaded_file)
-                return None, 0
-            return downloaded_file, info.get('duration', 0)
-            
-    except Exception as e:
-        print(f"❌ Download failed for {url}: {str(e)}")
-        return None, 0
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                downloaded_file = ydl.prepare_filename(info)
+                
+                # Verify the file has audio
+                result = subprocess.run(
+                    ['ffprobe', '-loglevel', 'error', '-select_streams', 'a',
+                     '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', downloaded_file],
+                    stdout=subprocess.PIPE,
+                    text=True
+                )
+                if 'audio' not in result.stdout:
+                    print("⚠️ Skipping: No audio track found")
+                    os.remove(downloaded_file)
+                    return None, 0
+                return downloaded_file, info.get('duration', 0)
+                
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 5  # Exponential backoff
+                print(f"⚠️ Download attempt {attempt + 1} failed. Retrying in {wait_time} seconds... Error: {str(e)}")
+                time.sleep(wait_time)
+                continue
+            print(f"❌ Download failed after {max_retries} attempts: {str(e)}")
+            return None, 0
 
 def convert_to_tiktok(video_path):
     try:
@@ -102,7 +122,8 @@ def convert_to_tiktok(video_path):
             'ffmpeg', '-i', video_path,
             '-vf', 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1',
             '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-            '-c:a', 'aac', '-y', output_path
+            '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
+            '-y', output_path
         ], check=True)
         return output_path
     except Exception as e:
@@ -132,22 +153,25 @@ if __name__ == "__main__":
             break
             
         try:
+            print(f"\n=== Processing: {post.title[:50]}... ===")
+            
             # Skip if not a video domain
             if not any(domain in post.url for domain in VIDEO_DOMAINS):
                 print(f"⚠️ Skipping: Unsupported URL - {post.url}")
                 continue
                 
-            print(f"\n=== Processing: {post.title[:50]}... ===")
-                
             video_path, duration = download_video(post.url)
-            if not video_path or not (10 <= duration <= 180):
-                if video_path:
-                    os.remove(video_path)
+            if not video_path:
                 continue
-
+                
+            if not (10 <= duration <= 180):
+                print(f"⚠️ Skipping: Duration {duration}s out of range")
+                os.remove(video_path)
+                continue
+            
             vertical_path = convert_to_tiktok(video_path)
-            os.remove(video_path)
-
+            os.remove(video_path)  # Clean up original video
+            
             if vertical_path:
                 sanitized_title = sanitize_filename(post.title)
                 final_path = f"{sanitized_title}.mp4"
