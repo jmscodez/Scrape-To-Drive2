@@ -1,0 +1,33 @@
+name: Run All
+
+on:
+  workflow_dispatch:  # Allows you to trigger it manually from GitHub
+
+jobs:
+  run_all_jobs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: "3.9"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run NBA script
+        run: python NBA.py
+
+      - name: Run NFL script
+        run: python NFL-2.py
+
+      - name: Run dogs script
+        run: python dogs.py
+
+      - name: Run poly script
+        run: python poly.py
