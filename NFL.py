@@ -63,36 +63,105 @@ def download_video(url):
             'format': 'bestvideo[height<=1080]+bestaudio/best',
             'merge_output_format': 'mp4',
             'quiet': True,
-            'cookiefile': 'cookies.txt',  # 👈 Add this line
+            'cookiefile': 'cookies.txt',
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                              'AppleWebKit/537.36 (KHTML, like Gecko) '
-                              'Chrome/122.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Referer': 'https://www.reddit.com/',
+                'Origin': 'https://www.reddit.com'
             },
             'extractor_args': {
-                'reddit': {'skip_auth': True}
-            }
+                'reddit': {
+                    'skip_auth': True,
+                    'fallback': True  # Add fallback behavior
+                },
+                'youtube': {
+                    'skip': ['dash', 'hls'],
+                    'player_client': ['android']  # Use mobile client
+                }
+            },
+            'retries': 5,
+            'fragment_retries': 5,
+            'skip_unavailable_fragments': True,
+            'throttledratelimit': 100,
+            'ratelimit': 1000000,
+            'extract_flat': True,
+            'ignoreerrors': True,
+            'force_generic_extractor': True,
+            'compat_opts': ['no-youtube-unavailable-videos']
+        }
+
+        # Add random delay between requests
+        import random, time
+        time.sleep(random.uniform(1, 3))
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            try:
+                info = ydl.extract_info(url, download=True)
+                if not info:
+                    print(f"❌ Failed to extract info for {url}")
+                    return None, 0
+                    
+                downloaded_file = ydl.prepare_filename(info)
+                
+                # Verify file
+                if not os.path.exists(downloaded_file):
+                    print(f"❌ Download failed - no file created for {url}")
+                    return None, 0
+                    
+                # Verify audio track
+                result = subprocess.run(
+                    ['ffprobe', '-loglevel', 'error', '-select_streams', 'a', 
+                     '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', downloaded_file],
+                    stdout=subprocess.PIPE,
+                    text=True
+                )
+                if 'audio' not in result.stdout:
+                    print("⚠️ Skipping: No audio track found")
+                    os.remove(downloaded_file)
+                    return None, 0
+                    
+                return downloaded_file, info.get('duration', 0)
+                
+            except yt_dlp.utils.DownloadError as e:
+                print(f"❌ Download failed (will retry with fallback): {str(e)}")
+                # Try again with different parameters
+                return download_video_fallback(url)
+                
+    except Exception as e:
+        print(f"❌ Critical download error: {str(e)}")
+        return None, 0
+
+def download_video_fallback(url):
+    """Alternative download method when primary fails"""
+    try:
+        ydl_opts = {
+            'outtmpl': '%(id)s.%(ext)s',
+            'format': 'best',
+            'merge_output_format': 'mp4',
+            'quiet': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
+                'Referer': 'https://www.google.com/'
+            },
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android_embedded']
+                }
+            },
+            'ignoreerrors': True
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            downloaded_file = ydl.prepare_filename(info)
-            
-            # Verify the file has audio
-            result = subprocess.run(
-                ['ffprobe', '-loglevel', 'error', '-select_streams', 'a',
-                 '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', downloaded_file],
-                stdout=subprocess.PIPE,
-                text=True
-            )
-            if 'audio' not in result.stdout:
-                print("⚠️ Skipping: No audio track found")
-                os.remove(downloaded_file)
+            if not info:
                 return None, 0
+                
+            downloaded_file = ydl.prepare_filename(info)
             return downloaded_file, info.get('duration', 0)
             
     except Exception as e:
-        print(f"❌ Download failed for {url}: {str(e)}")
+        print(f"❌ Fallback download failed: {str(e)}")
         return None, 0
 
 def convert_to_tiktok(video_path):
