@@ -61,15 +61,18 @@ def download_video(url):
             'format': 'bestvideo[height<=1080]+bestaudio/best',
             'merge_output_format': 'mp4',
             'quiet': True,
+            # Use the cookie file to help bypass blocks
+            'cookiefile': 'cookies.txt',
             'http_headers': {
-                'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                               'AppleWebKit/537.36 (KHTML, like Gecko) '
-                               'Chrome/122.0.0.0 Safari/537.36')
+                'User-Agent': (
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/122.0.0.0 Safari/537.36'
+                ),
+                'Referer': 'https://www.reddit.com/'
             },
             'extractor_args': {
-                'reddit': {
-                    'skip_auth': True
-                }
+                'reddit': {'skip_auth': True}
             }
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
