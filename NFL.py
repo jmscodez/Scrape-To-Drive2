@@ -11,7 +11,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# ------------------ Google Drive Integration ------------------
+# Google Drive Integration
 SCOPES = ['https://www.googleapis.com/auth/drive']
 SERVICE_ACCOUNT_INFO = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT'])
 
@@ -25,7 +25,6 @@ def get_or_create_folder(drive_service, folder_name):
     query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
     results = drive_service.files().list(q=query, fields="files(id)").execute()
     items = results.get('files', [])
-    
     if items:
         return items[0]['id']
     else:
@@ -44,7 +43,7 @@ def upload_to_drive(drive_service, folder_id, file_path):
     ).execute()
     print(f"Uploaded {file_name} to Google Drive")
 
-# ------------------ Video Processing ------------------
+# Video Processing
 VIDEO_DOMAINS = {
     'reddit.com', 'v.redd.it', 'youtube.com', 'youtu.be',
     'streamable.com', 'gfycat.com', 'imgur.com', 'tiktok.com',
@@ -53,89 +52,21 @@ VIDEO_DOMAINS = {
 }
 
 def sanitize_filename(filename):
-    """Sanitize the filename to avoid issues with long names and special characters"""
     filename = re.sub(r'[\\/*?:"<>|]', "", filename)
-    filename = filename[:100]  # Limit filename length
-    return filename.strip()
-
-def download_reddit_video(post, url):
-    try:
-        # Use PRAW to get the direct video URL
-        if 'v.redd.it' in url and hasattr(post, 'media') and post.media and 'reddit_video' in post.media:
-            video_url = post.media['reddit_video']['fallback_url']
-            audio_url = video_url.rsplit('/', 1)[0] + '/audio'
-            
-            # Download video
-            video_file = f"{post.id}_video.mp4"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Referer': 'https://www.reddit.com/',
-                'Accept': '*/*',
-                'Accept-Language': 'en-US,en;q=0.9',
-            }
-            video_response = requests.get(video_url, headers=headers, stream=True)
-            if video_response.status_code != 200:
-                print(f"⚠️ Failed to download video stream: {video_response.status_code}")
-                return None, 0
-            with open(video_file, 'wb') as f:
-                for chunk in video_response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-            
-            # Download audio (if available)
-            audio_file = f"{post.id}_audio.mp4"
-            audio_response = requests.get(audio_url, headers=headers, stream=True)
-            if audio_response.status_code == 200:
-                with open(audio_file, 'wb') as f:
-                    for chunk in audio_response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                # Merge video and audio
-                output_file = f"{post.id}.mp4"
-                subprocess.run([
-                    'ffmpeg', '-i', video_file, '-i', audio_file,
-                    '-c:v', 'copy', '-c:a', 'aac', '-y', output_file
-                ], check=True)
-                os.remove(video_file)
-                os.remove(audio_file)
-            else:
-                # No audio, use video only
-                output_file = video_file
-            
-            # Get duration using ffprobe
-            result = subprocess.run(
-                ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
-                 '-of', 'default=noprint_wrappers=1:nokey=1', output_file],
-                stdout=subprocess.PIPE, text=True
-            )
-            duration = float(result.stdout.strip())
-            return output_file, duration
-        return None, 0
-    except Exception as e:
-        print(f"❌ Direct download failed for {url}: {str(e)}")
-        return None, 0
+    return filename[:100].strip()
 
 def download_video(post, url):
-    # First, try direct download for Reddit videos
-    if 'v.redd.it' in url:
-        video_path, duration = download_reddit_video(post, url)
-        if video_path:
-            return video_path, duration
-    
-    # Fallback to yt-dlp for non-Reddit videos or if direct download fails
     try:
         ydl_opts = {
             'outtmpl': '%(id)s.%(ext)s',
             'format': 'bestvideo[height<=1080]+bestaudio/best',
             'merge_output_format': 'mp4',
             'quiet': True,
-            'cookiefile': 'cookies.txt',  # Use the cookies.txt file
-            'retries': 10,  # Increase retries
+            'cookiefile': 'cookies.txt',
+            'retries': 10,
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                              'AppleWebKit/537.36 (KHTML, like Gecko) '
-                              'Chrome/122.0.0.0 Safari/537.36',
-                'Referer': 'https://www.reddit.com/',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Referer': f'https://www.reddit.com{post.permalink}',
                 'Accept': '*/*',
                 'Accept-Language': 'en-US,en;q=0.9',
             },
@@ -150,7 +81,6 @@ def download_video(post, url):
             info = ydl.extract_info(url, download=True)
             downloaded_file = ydl.prepare_filename(info)
             
-            # Verify the file has audio
             result = subprocess.run(
                 ['ffprobe', '-loglevel', 'error', '-select_streams', 'a',
                  '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', downloaded_file],
@@ -187,7 +117,6 @@ def convert_to_tiktok(video_path):
         print(f"❌ Conversion failed: {str(e)}")
         return None
 
-# ------------------ OpenRouter API for Caption ------------------
 def generate_headline(post_title):
     try:
         truncated_title = post_title[:200]
@@ -261,7 +190,7 @@ def add_caption(video_path, text):
         print(f"❌ Caption failed: {str(e)}")
         return None
 
-# ------------------ Main Process ------------------
+# Main Process
 reddit = praw.Reddit(
     client_id=os.environ['REDDIT_CLIENT_ID'],
     client_secret=os.environ['REDDIT_CLIENT_SECRET'],
@@ -331,8 +260,7 @@ if __name__ == "__main__":
             processed += 1
             print(f"✅ Success: {sanitized_headline}")
             
-            # Add a delay to avoid rate-limiting
-            time.sleep(5)
+            time.sleep(5)  # Delay to avoid rate-limiting
 
         except Exception as e:
             print(f"⚠️ Error processing post {post.id}: {str(e)}")
