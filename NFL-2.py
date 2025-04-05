@@ -61,7 +61,6 @@ def download_video(url):
             'format': 'bestvideo[height<=1080]+bestaudio/best',
             'merge_output_format': 'mp4',
             'quiet': True,
-            # Use the cookie file to help bypass blocks
             'cookiefile': 'cookies.txt',
             'http_headers': {
                 'User-Agent': (
@@ -163,6 +162,7 @@ if __name__ == "__main__":
     target = 3  # Number of NFL videos to process
     
     drive_service = authenticate_drive()
+    # Change folder name to "Impulse" to use the same folder as NBA.py
     folder_id = get_or_create_folder(drive_service, "Impulse")
     
     for post in reddit.subreddit("NFL").top(time_filter="day", limit=50):
