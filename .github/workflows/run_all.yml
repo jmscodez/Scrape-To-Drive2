@@ -1,33 +1,77 @@
-name: Run All
+name: Run All Bots
 
 on:
-  workflow_dispatch:  # Allows you to trigger it manually from GitHub
+  workflow_dispatch:
 
 jobs:
-  run_all_jobs:
+  nba:
     runs-on: ubuntu-latest
+    env:
+      REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+      REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v2
-
-      - name: Set up Python
-        uses: actions/setup-python@v2
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
         with:
-          python-version: "3.9"
-
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
+          python-version: '3.10'
+      - run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - run: python NBA.py
 
-      - name: Run NBA script
-        run: python NBA.py
+  nfl:
+    runs-on: ubuntu-latest
+    env:
+      REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+      REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - run: python NFL-2.py
 
-      - name: Run NFL script
-        run: python NFL-2.py
+  dogs:
+    runs-on: ubuntu-latest
+    env:
+      REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+      REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+      GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - run: python dogs.py
 
-      - name: Run dogs script
-        run: python dogs.py
-
-      - name: Run poly script
-        run: python poly.py
+  poly:
+    runs-on: ubuntu-latest
+    env:
+      GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - run: python poly.py
