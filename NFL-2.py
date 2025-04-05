@@ -163,7 +163,7 @@ if __name__ == "__main__":
     target = 3  # Number of NFL videos to process
     
     drive_service = authenticate_drive()
-    folder_id = get_or_create_folder(drive_service, "NFL Videos")
+    folder_id = get_or_create_folder(drive_service, "Impulse")
     
     for post in reddit.subreddit("NFL").top(time_filter="day", limit=50):
         if processed >= target:
