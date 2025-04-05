@@ -57,18 +57,69 @@ def sanitize_filename(filename):
     filename = filename[:100]  # Limit filename length
     return filename.strip()
 
-def download_video(url):
+def download_video(post, url):
     try:
+        # If it's a Reddit video, try to get the direct URL
+        if 'v.redd.it' in url and hasattr(post, 'media') and post.media and 'reddit_video' in post.media:
+            video_url = post.media['reddit_video']['fallback_url']
+            audio_url = video_url.rsplit('/', 1)[0] + '/audio'
+            
+            # Download video and audio separately
+            video_file = f"{post.id}_video.mp4"
+            audio_file = f"{post.id}_audio.mp4"
+            
+            # Download video
+            video_response = requests.get(video_url, stream=True)
+            if video_response.status_code != 200:
+                print(f"⚠️ Failed to download video stream: {video_response.status_code}")
+                return None, 0
+            with open(video_file, 'wb') as f:
+                for chunk in video_response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            
+            # Download audio (if available)
+            audio_response = requests.get(audio_url, stream=True)
+            if audio_response.status_code == 200:
+                with open(audio_file, 'wb') as f:
+                    for chunk in audio_response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                # Merge video and audio
+                output_file = f"{post.id}.mp4"
+                subprocess.run([
+                    'ffmpeg', '-i', video_file, '-i', audio_file,
+                    '-c:v', 'copy', '-c:a', 'aac', '-y', output_file
+                ], check=True)
+                os.remove(video_file)
+                os.remove(audio_file)
+            else:
+                # No audio, use video only
+                output_file = video_file
+            
+            # Get duration using ffprobe
+            result = subprocess.run(
+                ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+                 '-of', 'default=noprint_wrappers=1:nokey=1', output_file],
+                stdout=subprocess.PIPE, text=True
+            )
+            duration = float(result.stdout.strip())
+            return output_file, duration
+        
+        # Fallback to yt-dlp for non-Reddit videos or if direct download fails
         ydl_opts = {
             'outtmpl': '%(id)s.%(ext)s',
             'format': 'bestvideo[height<=1080]+bestaudio/best',
             'merge_output_format': 'mp4',
             'quiet': True,
+            'retries': 10,  # Increase retries
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                               'AppleWebKit/537.36 (KHTML, like Gecko) '
                               'Chrome/122.0.0.0 Safari/537.36',
-                'Referer': 'https://www.reddit.com/'
+                'Referer': 'https://www.reddit.com/',
+                'Accept': '*/*',
+                'Accept-Language': 'en-US,en;q=0.9',
             },
             'extractor_args': {
                 'reddit': {'skip_auth': True},
@@ -233,7 +284,7 @@ if __name__ == "__main__":
                 print("⚠️ Skipping: No audio track")
                 continue
                 
-            video_path, duration = download_video(post.url)
+            video_path, duration = download_video(post, post.url)
             if not video_path:
                 continue
                 
