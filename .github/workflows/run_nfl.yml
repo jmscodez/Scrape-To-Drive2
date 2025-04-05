@@ -25,13 +25,10 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y ffmpeg
         
-    - name: Create cookies.txt
-      run: echo "${{ secrets.REDDIT_COOKIES }}" > cookies.txt
-        
     - name: Run NFL bot
       env:
         REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
         REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
         OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
-      run: python NFL.py
+      run: python NFL-2.py
