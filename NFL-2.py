@@ -14,96 +14,138 @@ SCOPES = ['https://www.googleapis.com/auth/drive']
 SERVICE_ACCOUNT_INFO = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT'])
 
 def authenticate_drive():
-    credentials = service_account.Credentials.from_service_account_info(
+    creds = service_account.Credentials.from_service_account_info(
         SERVICE_ACCOUNT_INFO, scopes=SCOPES
     )
-    return build('drive', 'v3', credentials=credentials)
+    return build('drive', 'v3', credentials=creds)
 
 def get_or_create_folder(drive_service, folder_name):
-    query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-    results = drive_service.files().list(q=query, fields="files(id)").execute()
-    items = results.get('files', [])
-    
+    q = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    res = drive_service.files().list(q=q, fields="files(id)").execute()
+    items = res.get('files', [])
     if items:
         return items[0]['id']
-    else:
-        folder = drive_service.files().create(
-            body={'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'},
-            fields='id'
-        ).execute()
-        return folder['id']
+    folder = drive_service.files().create(
+        body={'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'},
+        fields='id'
+    ).execute()
+    return folder['id']
 
 def upload_to_drive(drive_service, folder_id, file_path):
-    file_name = os.path.basename(file_path)
+    name = os.path.basename(file_path)
     media = MediaFileUpload(file_path)
     drive_service.files().create(
-        body={'name': file_name, 'parents': [folder_id]},
+        body={'name': name, 'parents': [folder_id]},
         media_body=media
     ).execute()
-    print(f"Uploaded {file_name} to Google Drive")
+    print(f"Uploaded {name} to Google Drive")
 
-# ------------------ Video Processing ------------------
+# ------------------ Utilities ------------------
+def sanitize_filename(fn):
+    fn = re.sub(r'[\\/*?:"<>|]', "", fn)
+    return fn.strip()[:100]
+
+def get_video_resolution(path):
+    """Return (width, height) of the first video stream via ffprobe."""
+    cmd = [
+        'ffprobe','-v','error',
+        '-select_streams','v:0',
+        '-show_entries','stream=width,height',
+        '-of','csv=s=x:p=0',
+        path
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode == 0 and 'x' in proc.stdout:
+        w,h = proc.stdout.strip().split('x')
+        return int(w), int(h)
+    return None, None
+
+# ------------------ Video Download & Processing ------------------
 VIDEO_DOMAINS = {
-    'reddit.com', 'v.redd.it', 'youtube.com', 'youtu.be',
-    'streamable.com', 'gfycat.com', 'imgur.com', 'tiktok.com',
-    'instagram.com', 'twitter.com', 'x.com', 'twitch.tv',
-    'dailymotion.com', 'rumble.com'
+    'reddit.com','v.redd.it','youtube.com','youtu.be',
+    'streamable.com','gfycat.com','imgur.com','tiktok.com',
+    'instagram.com','twitter.com','x.com','twitch.tv',
+    'dailymotion.com','rumble.com'
 }
 
-def sanitize_filename(filename):
-    filename = re.sub(r'[\\/*?:"<>|]', "", filename)
-    return filename.strip()[:100]
-
 def download_video(url):
+    ydl_opts = {
+        'outtmpl': '%(id)s.%(ext)s',
+        'format': 'bestvideo[height<=1080]+bestaudio/best',
+        'merge_output_format': 'mp4',
+        'quiet': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0',
+            'Referer': 'https://www.reddit.com/'
+        },
+        'extractor_args': {'reddit': {'skip_auth': True}}
+    }
     try:
-        ydl_opts = {
-            'outtmpl': '%(id)s.%(ext)s',
-            'format': 'bestvideo[height<=1080]+bestaudio/best',
-            'merge_output_format': 'mp4',
-            'quiet': True,
-            'cookiefile': 'cookies.txt',
-            'http_headers': {
-                'User-Agent': (
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                    'AppleWebKit/537.36 (KHTML, like Gecko) '
-                    'Chrome/122.0.0.0 Safari/537.36'
-                ),
-                'Referer': 'https://www.reddit.com/'
-            },
-            'extractor_args': {
-                'reddit': {'skip_auth': True}
-            }
-        }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            downloaded_file = ydl.prepare_filename(info)
-            result = subprocess.run(
-                ['ffprobe', '-loglevel', 'error', '-select_streams', 'a',
-                 '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', downloaded_file],
+            fn = ydl.prepare_filename(info)
+            # verify audio
+            res = subprocess.run(
+                ['ffprobe','-v','error','-select_streams','a',
+                 '-show_entries','stream=codec_type','-of','csv=p=0', fn],
                 stdout=subprocess.PIPE, text=True
             )
-            if 'audio' not in result.stdout:
-                print("⚠️ Skipping: No audio track found")
-                os.remove(downloaded_file)
+            if 'audio' not in res.stdout:
+                os.remove(fn)
                 return None, 0
-            return downloaded_file, info.get('duration', 0)
+            return fn, info.get('duration', 0)
     except Exception as e:
-        print(f"❌ Download failed for {url}: {str(e)}")
+        print(f"❌ Download failed for {url}: {e}")
         return None, 0
 
 def convert_to_tiktok(video_path):
+    """
+    If aspect ratio ≈9:16: scale & crop.
+    Else: crop centered square, blur it to 1080x1920, overlay square.
+    """
+    w, h = get_video_resolution(video_path)
+    if not w or not h:
+        method = 'simple'
+    else:
+        aspect = w / h
+        method = 'simple' if abs(aspect - 9/16) < 0.02 else 'blur'
+
+    out = video_path.replace(".mp4", "_VERTICAL.mp4")
+
+    if method == 'simple':
+        cmd = [
+            'ffmpeg','-i',video_path,
+            '-vf','scale=1080:1920:force_original_aspect_ratio=increase,'
+                 'crop=1080:1920,setsar=1',
+            '-c:v','libx264','-preset','fast','-crf','23',
+            '-c:a','aac','-y', out
+        ]
+    else:
+        sq = min(w, h)
+        x_off = (w - sq) / 2
+        y_off = (h - sq) / 2
+        filt = (
+            f"split=2[bgsrc][fgsrc];"
+            f"[bgsrc]crop={sq}:{sq}:{x_off}:{y_off},"
+            f"scale=1080:1920,setsar=1,gblur=sigma=20[bg];"
+            f"[fgsrc]crop={sq}:{sq}:{x_off}:{y_off},"
+            f"scale=1080:1080,setsar=1[fg];"
+            f"[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto,setsar=1"
+        )
+        cmd = [
+            'ffmpeg','-i',video_path,
+            '-vf', filt,
+            '-c:v','libx264','-preset','fast','-crf','23',
+            '-c:a','aac','-y', out
+        ]
+
     try:
-        output_path = video_path.replace(".mp4", "_VERTICAL.mp4")
-        subprocess.run([
-            'ffmpeg', '-i', video_path,
-            '-vf', 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1',
-            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-            '-c:a', 'aac', '-y', output_path
-        ], check=True)
-        return output_path
+        subprocess.run(cmd, check=True)
+        return out
     except Exception as e:
-        print(f"❌ Conversion failed: {str(e)}")
+        print(f"❌ Conversion failed ({method}): {e}")
         return None
+# ------------------ Headline Generation ------------------
 
 def generate_headline(post_title):
     try:
@@ -154,44 +196,34 @@ def generate_headline(post_title):
 reddit = praw.Reddit(
     client_id=os.environ['REDDIT_CLIENT_ID'],
     client_secret=os.environ['REDDIT_CLIENT_SECRET'],
-    user_agent="script:mybot:v1.0 (by /u/Proof_Difficulty_396)"
+    user_agent="script:mybot:v1.0"
 )
 
 if __name__ == "__main__":
+    drive = authenticate_drive()
+    folder_id = get_or_create_folder(drive, "Impulse")
     processed = 0
-    target = 3  # Number of NFL videos to process
-    
-    drive_service = authenticate_drive()
-    # Change folder name to "Impulse" to use the same folder as NBA.py
-    folder_id = get_or_create_folder(drive_service, "Impulse")
-    
+    target = 3
+
     for post in reddit.subreddit("NFL").top(time_filter="day", limit=50):
         if processed >= target:
             break
-            
-        try:
-            if not any(domain in post.url for domain in VIDEO_DOMAINS):
-                continue
-                
-            video_path, duration = download_video(post.url)
-            if not video_path or not (10 <= duration <= 180):
-                continue
-                
-            vertical_path = convert_to_tiktok(video_path)
-            os.remove(video_path)
-            
-            if vertical_path:
-                headline = generate_headline(post.title)
-                sanitized_headline = sanitize_filename(headline)
-                final_path = f"{sanitized_headline}.mp4"
-                os.rename(vertical_path, final_path)
-                
-                upload_to_drive(drive_service, folder_id, final_path)
-                os.remove(final_path)
-                processed += 1
-                print(f"✅ Processed: {sanitized_headline}")
-                
-        except Exception as e:
-            print(f"⚠️ Error processing post {post.id}: {str(e)}")
-            
-    print(f"\n🎉 Completed: {processed}/{target} videos processed")
+        if not any(d in post.url for d in VIDEO_DOMAINS):
+            continue
+
+        path, dur = download_video(post.url)
+        if not path or not (10 <= dur <= 180):
+            continue
+
+        vert = convert_to_tiktok(path)
+        os.remove(path)
+        if not vert:
+            continue
+
+        headline = sanitize_filename(generate_headline(post.title))
+        final = f"{headline}.mp4"
+        os.rename(vert, final)
+        upload_to_drive(drive, folder_id, final)
+        os.remove(final)
+        processed += 1
+        print(f"✅ Processed: {headline}")
