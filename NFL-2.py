@@ -40,13 +40,13 @@ def upload_to_drive(drive_service, folder_id, file_path):
     ).execute()
     print(f"Uploaded {name} to Google Drive")
 
+
 # ------------------ Utilities ------------------
 def sanitize_filename(fn):
     fn = re.sub(r'[\\/*?:"<>|]', "", fn)
     return fn.strip()[:100]
 
 def get_video_resolution(path):
-    """Return (width, height) of the first video stream via ffprobe."""
     cmd = [
         'ffprobe','-v','error',
         '-select_streams','v:0',
@@ -59,6 +59,7 @@ def get_video_resolution(path):
         w,h = proc.stdout.strip().split('x')
         return int(w), int(h)
     return None, None
+
 
 # ------------------ Video Download & Processing ------------------
 VIDEO_DOMAINS = {
@@ -74,8 +75,10 @@ def download_video(url):
         'format': 'bestvideo[height<=1080]+bestaudio/best',
         'merge_output_format': 'mp4',
         'quiet': True,
+        'cookiefile': 'cookies.txt',
+        'force_ipv4': True,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
             'Referer': 'https://www.reddit.com/'
         },
         'extractor_args': {'reddit': {'skip_auth': True}}
@@ -84,7 +87,7 @@ def download_video(url):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             fn = ydl.prepare_filename(info)
-            # verify audio
+            # verify audio track
             res = subprocess.run(
                 ['ffprobe','-v','error','-select_streams','a',
                  '-show_entries','stream=codec_type','-of','csv=p=0', fn],
@@ -99,10 +102,6 @@ def download_video(url):
         return None, 0
 
 def convert_to_tiktok(video_path):
-    """
-    If aspect ratio ≈9:16: scale & crop.
-    Else: crop centered square, blur it to 1080x1920, overlay square.
-    """
     w, h = get_video_resolution(video_path)
     if not w or not h:
         method = 'simple'
@@ -145,6 +144,7 @@ def convert_to_tiktok(video_path):
     except Exception as e:
         print(f"❌ Conversion failed ({method}): {e}")
         return None
+        
 # ------------------ Headline Generation ------------------
 
 def generate_headline(post_title):
