@@ -1,5 +1,3 @@
-# .github/workflows/run_poly.yml
-
 name: Run Poly Video Bot
 
 on:
