@@ -1,23 +1,14 @@
 # poly.py
 
-# ── DISABLE SSL VERIFICATION FOR requests/urllib3 ──────────────────────────────
-import ssl
-import urllib3
-import requests
-from urllib3.exceptions import InsecureRequestWarning
-
-# suppress only the single InsecureRequestWarning
-urllib3.disable_warnings(InsecureRequestWarning)
-
-# monkey‑patch all requests Sessions to default verify=False
-_orig_req = requests.Session.request
-def _req_no_verify(self, method, url, **kwargs):
-    kwargs['verify'] = False
-    return _orig_req(self, method, url, **kwargs)
-requests.Session.request = _req_no_verify
-
-# ── IMPORTS ─────────────────────────────────────────────────────────────────────
+# ── FORCE requests/snscrape TO USE certifi’s CA BUNDLE ─────────────────────────
 import os
+import certifi
+
+# point both requests and urllib3 at certifi’s trusted root CAs
+os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
+os.environ['SSL_CERT_FILE']      = certifi.where()
+
+# ── STANDARD IMPORTS ───────────────────────────────────────────────────────────
 import sys
 import json
 import re
@@ -26,6 +17,7 @@ import datetime
 import subprocess
 from pathlib import Path
 
+import requests
 from yt_dlp import YoutubeDL
 from snscrape.modules.twitter import TwitterSearchScraper
 from google.oauth2 import service_account
