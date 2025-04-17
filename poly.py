@@ -1,21 +1,20 @@
 # poly.py
 
-# ── DISABLE SSL VERIFICATION FOR ALL urllib3/requests ───────────────────────────
-import ssl, urllib3, requests
-from requests.adapters import HTTPAdapter
+# ── DISABLE SSL VERIFICATION FOR requests/urllib3 ──────────────────────────────
+import ssl
+import urllib3
+import requests
+from urllib3.exceptions import InsecureRequestWarning
 
-# suppress warnings
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# suppress only the single InsecureRequestWarning
+urllib3.disable_warnings(InsecureRequestWarning)
 
-# patch pool manager to disable cert verify
-_original_poolmanager = HTTPAdapter.init_poolmanager
-def _patched_init_poolmanager(self, connections, maxsize, block=False, **kwargs):
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    kwargs['ssl_context'] = ctx
-    return _original_poolmanager(self, connections, maxsize, block=block, **kwargs)
-HTTPAdapter.init_poolmanager = _patched_init_poolmanager
+# monkey‑patch all requests Sessions to default verify=False
+_orig_req = requests.Session.request
+def _req_no_verify(self, method, url, **kwargs):
+    kwargs['verify'] = False
+    return _orig_req(self, method, url, **kwargs)
+requests.Session.request = _req_no_verify
 
 # ── IMPORTS ─────────────────────────────────────────────────────────────────────
 import os
