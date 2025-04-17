@@ -1,12 +1,12 @@
 # poly.py
 
-# ── SSL MONKEY‑PATCH ────────────────────────────────────────────────────────────
-# Disable SSL cert verification to avoid snscrape certificate errors
-import ssl
-ssl._create_default_https_context = ssl._create_unverified_context
-
-# ── IMPORTS ─────────────────────────────────────────────────────────────────────
-import os, sys, json, re, tempfile, datetime, subprocess
+import os
+import sys
+import json
+import re
+import tempfile
+import datetime
+import subprocess
 from pathlib import Path
 
 import requests
@@ -17,6 +17,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
+
 ACCOUNTS          = ["disclosetv", "CollinRugg", "MarioNawfal"]
 MAX_TO_UPLOAD     = 5
 MIN_DURATION      = 10    # seconds
@@ -28,6 +29,7 @@ OPENROUTER_MODEL  = "google/gemini-2.0-flash-lite-001"
 COOKIEFILE        = "cookies.txt"
 
 # ── HELPERS ────────────────────────────────────────────────────────────────────
+
 def get_date_ranges():
     today     = datetime.datetime.utcnow().date()
     yesterday = today - datetime.timedelta(days=1)
@@ -55,8 +57,8 @@ def score_tweet(text, api_key):
     )
     r = requests.post(
         OPENROUTER_URL,
-        headers={"Authorization":f"Bearer {api_key}"},
-        json={"model":OPENROUTER_MODEL,"messages":[{"role":"user","content":prompt}]},
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={"model": OPENROUTER_MODEL, "messages":[{"role":"user","content":prompt}]},
         timeout=30
     )
     r.raise_for_status()
@@ -80,8 +82,9 @@ def download_video(url, dl_dir):
 
 def probe_video(path):
     has_audio = bool(subprocess.run(
-        ["ffprobe","-v","error","-select_streams","a","-show_entries",
-         "stream=codec_type","-of","default=noprint_wrappers=1:nokey=1", str(path)],
+        ["ffprobe","-v","error","-select_streams","a",
+         "-show_entries","stream=codec_type",
+         "-of","default=noprint_wrappers=1:nokey=1", str(path)],
         capture_output=True
     ).stdout.strip())
     dur = float(subprocess.run(
@@ -95,7 +98,8 @@ def convert_to_portrait(src, dst):
     w, h = OUTPUT_RESOLUTION
     vf = f"scale={w}:-2,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black"
     subprocess.run(
-        ["ffmpeg","-y","-i",str(src),"-vf",vf,"-c:v","libx264","-c:a","copy",str(dst)],
+        ["ffmpeg","-y","-i",str(src),"-vf",vf,
+         "-c:v","libx264","-c:a","copy",str(dst)],
         check=True
     )
 
@@ -104,24 +108,25 @@ def get_drive_service():
     creds = service_account.Credentials.from_service_account_info(
         info, scopes=["https://www.googleapis.com/auth/drive.file"]
     )
-    return build("drive","v3",credentials=creds)
+    return build("drive","v3", credentials=creds)
 
 def ensure_folder(drive, name):
     q = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-    res = drive.files().list(q=q, fields="files(id)").execute().get("files",[])
+    res = drive.files().list(q=q, fields="files(id)").execute().get("files", [])
     if res:
         return res[0]["id"]
     f = drive.files().create(
-        body={"name":name,"mimeType":"application/vnd.google-apps.folder"}
+        body={"name": name, "mimeType": "application/vnd.google-apps.folder"}
     ).execute()
     return f["id"]
 
 def upload_file(drive, folder_id, path):
     media = MediaFileUpload(str(path), mimetype="video/mp4", resumable=True)
-    meta  = {"name":path.name, "parents":[folder_id]}
+    meta  = {"name": path.name, "parents": [folder_id]}
     drive.files().create(body=meta, media_body=media, fields="id").execute()
 
 # ── MAIN ───────────────────────────────────────────────────────────────────────
+
 def main():
     if "OPENROUTER_API_KEY" not in os.environ or "GDRIVE_SERVICE_ACCOUNT" not in os.environ:
         print("❗ Missing OPENROUTER_API_KEY or GDRIVE_SERVICE_ACCOUNT", file=sys.stderr)
@@ -136,56 +141,58 @@ def main():
         print("No video tweets found.")
         return
 
-    # Score & sort
     scored = [(t["url"], t["text"], score_tweet(t["text"], api_key)) for t in all_tw]
     scored.sort(key=lambda x: x[2], reverse=True)
 
     workdir = Path(tempfile.mkdtemp(prefix="poly_"))
-    dl, pr = workdir/"downloads", workdir/"processed"
+    dl, pr = workdir / "downloads", workdir / "processed"
     dl.mkdir(); pr.mkdir()
 
     uploaded = 0
     for url, text, score in scored:
         if uploaded >= MAX_TO_UPLOAD:
             break
-        print(f"\n➡️ {url} (score {score:.1f})")
+        print(f"\n➡️ Processing {url} (score {score:.1f})")
         try:
             raw = download_video(url, dl)
             has_audio, dur = probe_video(raw)
             if not has_audio or dur < MIN_DURATION or dur > MAX_DURATION:
-                raw.unlink(); continue
+                raw.unlink()
+                continue
 
-            tmp   = pr/f"{raw.stem}_c.mp4"
+            tmp   = pr / f"{raw.stem}_c.mp4"
             convert_to_portrait(raw, tmp)
             raw.unlink()
 
-            # headline
             hl = requests.post(
                 OPENROUTER_URL,
-                headers={"Authorization":f"Bearer {api_key}"},
+                headers={"Authorization": f"Bearer {api_key}"},
                 json={
-                    "model":OPENROUTER_MODEL,
+                    "model": OPENROUTER_MODEL,
                     "messages":[{"role":"user","content":
                         f"Generate a concise headline (≤10 words, no hashtags or special chars) for this video tweet: {url}"
                     }],
-                }, timeout=30
+                },
+                timeout=30
             ).json()["choices"][0]["message"]["content"]
-            safe = re.sub(r"[^A-Za-z0-9 _-]","",hl).strip()
+
+            safe = re.sub(r"[^A-Za-z0-9 _-]", "", hl).strip()
             safe = "_".join(safe.split()) or "video"
-            final = pr/f"{safe}.mp4"
+            final = pr / f"{safe}.mp4"
             tmp.rename(final)
 
             upload_file(drive, folder, final)
             final.unlink()
-            uploaded += 1
             print(f"✅ Uploaded {safe}.mp4")
+            uploaded += 1
 
         except Exception as e:
             print(f"⚠️ skip {url}: {e}", file=sys.stderr)
 
     # Cleanup
     for d in (dl, pr):
-        for f in d.iterdir(): f.unlink()
+        for f in d.iterdir():
+            f.unlink()
         d.rmdir()
     workdir.rmdir()
     print(f"\nFinished. {uploaded} videos uploaded.")
