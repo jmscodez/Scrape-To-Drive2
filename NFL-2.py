@@ -41,7 +41,7 @@ def upload_to_drive(drive_service, folder_id, file_path):
     print(f"Uploaded {name} to Google Drive")
 
 
-# ------------------ Utilities ------------------
+# ------------------ Utils ------------------
 def sanitize_filename(fn):
     fn = re.sub(r'[\\/*?:"<>|]', "", fn)
     return fn.strip()[:100]
@@ -56,12 +56,12 @@ def get_video_resolution(path):
     ]
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proc.returncode == 0 and 'x' in proc.stdout:
-        w,h = proc.stdout.strip().split('x')
+        w, h = proc.stdout.strip().split('x')
         return int(w), int(h)
     return None, None
 
 
-# ------------------ Video Download & Processing ------------------
+# ------------------ Download & Convert ------------------
 VIDEO_DOMAINS = {
     'reddit.com','v.redd.it','youtube.com','youtu.be',
     'streamable.com','gfycat.com','imgur.com','tiktok.com',
@@ -78,7 +78,7 @@ def download_video(url):
         'cookiefile': 'cookies.txt',
         'force_ipv4': True,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
             'Referer': 'https://www.reddit.com/'
         },
         'extractor_args': {'reddit': {'skip_auth': True}}
@@ -87,7 +87,6 @@ def download_video(url):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             fn = ydl.prepare_filename(info)
-            # verify audio track
             res = subprocess.run(
                 ['ffprobe','-v','error','-select_streams','a',
                  '-show_entries','stream=codec_type','-of','csv=p=0', fn],
@@ -103,21 +102,13 @@ def download_video(url):
 
 def convert_to_tiktok(video_path):
     w, h = get_video_resolution(video_path)
-    if not w or not h:
-        method = 'simple'
-    else:
-        aspect = w / h
-        method = 'simple' if abs(aspect - 9/16) < 0.02 else 'blur'
-
-    out = video_path.replace(".mp4", "_VERTICAL.mp4")
-
-    if method == 'simple':
+    if not w or not h or abs(w/h - 9/16) < 0.02:
         cmd = [
             'ffmpeg','-i',video_path,
             '-vf','scale=1080:1920:force_original_aspect_ratio=increase,'
                  'crop=1080:1920,setsar=1',
             '-c:v','libx264','-preset','fast','-crf','23',
-            '-c:a','aac','-y', out
+            '-c:a','aac','-y', video_path.replace(".mp4","_VERTICAL.mp4")
         ]
     else:
         sq = min(w, h)
@@ -135,18 +126,17 @@ def convert_to_tiktok(video_path):
             'ffmpeg','-i',video_path,
             '-vf', filt,
             '-c:v','libx264','-preset','fast','-crf','23',
-            '-c:a','aac','-y', out
+            '-c:a','aac','-y', video_path.replace(".mp4","_VERTICAL.mp4")
         ]
-
     try:
         subprocess.run(cmd, check=True)
-        return out
+        return video_path.replace(".mp4","_VERTICAL.mp4")
     except Exception as e:
-        print(f"❌ Conversion failed ({method}): {e}")
+        print(f"❌ Conversion failed: {e}")
         return None
-        
-# ------------------ Headline Generation ------------------
 
+
+# ------------------ Headline Generation ------------------
 def generate_headline(post_title):
     try:
         truncated_title = post_title[:200]
@@ -165,34 +155,32 @@ def generate_headline(post_title):
             "Output: 'Player X Makes an Epic Catch 🏈🔥'\n\n"
             f"Now create a TikTok caption for this content: '{truncated_title}'"
         )
-        
         headers = {
             "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
             "Content-Type": "application/json"
         }
         payload = {
             "model": "google/gemma-2-9b-it",
-            "messages": [{
-                "role": "system", 
-                "content": "You are a social media expert who creates viral TikTok captions for NFL content."
-            }, {
-                "role": "user", 
-                "content": prompt
-            }],
-            "max_tokens": 100,
-            "temperature": 0.7
+            "messages": [
+                {"role":"system","content":"You are a social media expert who creates viral TikTok captions for NFL content."},
+                {"role":"user","content":prompt}
+            ],
+            "max_tokens":100,
+            "temperature":0.7
         }
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
-        response.raise_for_status()
-        caption = response.json()['choices'][0]['message']['content'].strip()
-        caption = re.sub(r'_VERTICAL\.mp4', '', caption)
-        caption = re.sub(r'#\w+', '', caption)
+        res = requests.post("https://openrouter.ai/api/v1/chat/completions",
+                            json=payload, headers=headers)
+        res.raise_for_status()
+        caption = res.json()['choices'][0]['message']['content'].strip()
+        caption = re.sub(r'_VERTICAL\.mp4','', caption)
+        caption = re.sub(r'#\w+','', caption)
         return caption[:150]
     except Exception as e:
-        print(f"⚠️ Headline generation failed: {str(e)}")
+        print(f"⚠️ Headline failed: {e}")
         return sanitize_filename(post_title)[:100]
 
-# ------------------ Main Process ------------------
+
+# ------------------ Main ------------------
 reddit = praw.Reddit(
     client_id=os.environ['REDDIT_CLIENT_ID'],
     client_secret=os.environ['REDDIT_CLIENT_SECRET'],
