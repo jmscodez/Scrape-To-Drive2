@@ -1,5 +1,15 @@
 # poly.py
 
+# ── DISABLE SSL VERIFICATION FOR requests (and thus snscrape) ────────────────
+import requests, ssl
+requests.packages.urllib3.disable_warnings()  # suppress warnings
+_orig_request = requests.api.request
+def _request_no_verify(method, url, **kwargs):
+    kwargs['verify'] = False
+    return _orig_request(method, url, **kwargs)
+requests.api.request = _request_no_verify
+
+# ── STANDARD IMPORTS ───────────────────────────────────────────────────────────
 import os
 import sys
 import json
@@ -9,7 +19,6 @@ import datetime
 import subprocess
 from pathlib import Path
 
-import requests
 from yt_dlp import YoutubeDL
 from snscrape.modules.twitter import TwitterSearchScraper
 from google.oauth2 import service_account
@@ -17,7 +26,6 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
-
 ACCOUNTS          = ["disclosetv", "CollinRugg", "MarioNawfal"]
 MAX_TO_UPLOAD     = 5
 MIN_DURATION      = 10    # seconds
@@ -29,7 +37,6 @@ OPENROUTER_MODEL  = "google/gemini-2.0-flash-lite-001"
 COOKIEFILE        = "cookies.txt"
 
 # ── HELPERS ────────────────────────────────────────────────────────────────────
-
 def get_date_ranges():
     today     = datetime.datetime.utcnow().date()
     yesterday = today - datetime.timedelta(days=1)
@@ -126,7 +133,6 @@ def upload_file(drive, folder_id, path):
     drive.files().create(body=meta, media_body=media, fields="id").execute()
 
 # ── MAIN ───────────────────────────────────────────────────────────────────────
-
 def main():
     if "OPENROUTER_API_KEY" not in os.environ or "GDRIVE_SERVICE_ACCOUNT" not in os.environ:
         print("❗ Missing OPENROUTER_API_KEY or GDRIVE_SERVICE_ACCOUNT", file=sys.stderr)
