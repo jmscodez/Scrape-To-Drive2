@@ -75,7 +75,7 @@ def download_video(url):
         'format': 'bestvideo[height<=1080]+bestaudio/best',
         'merge_output_format': 'mp4',
         'quiet': True,
-        'cookiefile': 'cookies.txt',
+        'cookiefile': 'YT_Cookies.txt',
         'force_ipv4': True,
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
@@ -87,6 +87,7 @@ def download_video(url):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             fn = ydl.prepare_filename(info)
+            # verify audio
             res = subprocess.run(
                 ['ffprobe','-v','error','-select_streams','a',
                  '-show_entries','stream=codec_type','-of','csv=p=0', fn],
@@ -160,7 +161,7 @@ def generate_headline(post_title):
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "google/gemini-2.0-flash-lite-001",
+            "model": "google/gemini-2.0-flash-lite-001",  # updated model
             "messages": [
                 {"role":"system","content":"You are a social media expert who creates viral TikTok captions for NFL content."},
                 {"role":"user","content":prompt}
