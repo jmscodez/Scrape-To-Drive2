@@ -76,6 +76,7 @@ def download_video(url):
         'merge_output_format': 'mp4',
         'quiet': True,
         'cookiefile': 'YT_Cookies.txt',
+        'cookies_from_browser': ['chrome'],
         'force_ipv4': True,
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
@@ -161,7 +162,7 @@ def generate_headline(post_title):
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "google/gemini-2.0-flash-lite-001",  # updated model
+            "model": "google/gemini-2.0-flash-lite-001",
             "messages": [
                 {"role":"system","content":"You are a social media expert who creates viral TikTok captions for NFL content."},
                 {"role":"user","content":prompt}
