@@ -1,3 +1,5 @@
+# .github/workflows/run_poly.yml
+
 name: Run Poly Video Bot
 
 on:
@@ -18,7 +20,9 @@ jobs:
           python-version: '3.10'
 
       - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg ca-certificates
 
       - name: Install Python deps
         run: |
@@ -29,7 +33,6 @@ jobs:
 
       - name: Run poly.py
         env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_API_KEY:     ${{ secrets.OPENROUTER_API_KEY }}
           GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
-          PYTHONHTTPSVERIFY: '0'
         run: python poly.py
