@@ -1,5 +1,23 @@
 # poly.py
 
+# ── DISABLE SSL VERIFICATION FOR ALL urllib3/requests ───────────────────────────
+import ssl, urllib3, requests
+from requests.adapters import HTTPAdapter
+
+# suppress warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# patch pool manager to disable cert verify
+_original_poolmanager = HTTPAdapter.init_poolmanager
+def _patched_init_poolmanager(self, connections, maxsize, block=False, **kwargs):
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    kwargs['ssl_context'] = ctx
+    return _original_poolmanager(self, connections, maxsize, block=block, **kwargs)
+HTTPAdapter.init_poolmanager = _patched_init_poolmanager
+
+# ── IMPORTS ─────────────────────────────────────────────────────────────────────
 import os
 import sys
 import json
@@ -9,7 +27,6 @@ import datetime
 import subprocess
 from pathlib import Path
 
-import requests
 from yt_dlp import YoutubeDL
 from snscrape.modules.twitter import TwitterSearchScraper
 from google.oauth2 import service_account
@@ -17,7 +34,6 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
-
 ACCOUNTS          = ["disclosetv", "CollinRugg", "MarioNawfal"]
 MAX_TO_UPLOAD     = 5
 MIN_DURATION      = 10    # seconds
@@ -29,7 +45,6 @@ OPENROUTER_MODEL  = "google/gemini-2.0-flash-lite-001"
 COOKIEFILE        = "cookies.txt"
 
 # ── HELPERS ────────────────────────────────────────────────────────────────────
-
 def get_date_ranges():
     today     = datetime.datetime.utcnow().date()
     yesterday = today - datetime.timedelta(days=1)
@@ -126,7 +141,6 @@ def upload_file(drive, folder_id, path):
     drive.files().create(body=meta, media_body=media, fields="id").execute()
 
 # ── MAIN ───────────────────────────────────────────────────────────────────────
-
 def main():
     if "OPENROUTER_API_KEY" not in os.environ or "GDRIVE_SERVICE_ACCOUNT" not in os.environ:
         print("❗ Missing OPENROUTER_API_KEY or GDRIVE_SERVICE_ACCOUNT", file=sys.stderr)
