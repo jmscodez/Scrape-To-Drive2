@@ -1,5 +1,11 @@
 # poly.py
 
+# ── SSL MONKEY‑PATCH ────────────────────────────────────────────────────────────
+# Disable SSL cert verification globally (avoids snscrape SSL errors)
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+
+# ── STANDARD IMPORTS ────────────────────────────────────────────────────────────
 import os
 import sys
 import json
@@ -41,8 +47,12 @@ def fetch_tweets():
     out = []
     for acct in ACCOUNTS:
         query = f"from:{acct} since:{since} until:{until} filter:videos"
-        for t in TwitterSearchScraper(query).get_items():
-            out.append({"url": t.url, "text": t.content})
+        try:
+            for t in TwitterSearchScraper(query).get_items():
+                out.append({"url": t.url, "text": t.content})
+        except Exception as e:
+            print(f"⚠️ snscrape error for {acct}: {e}", file=sys.stderr)
+        # continue to next account even on errors
     return out
 
 def score_tweet(text, api_key):
@@ -129,7 +139,6 @@ def upload_file(drive, folder_id, path):
 # ── MAIN ───────────────────────────────────────────────────────────────────────
 
 def main():
-    # check secrets
     if "OPENROUTER_API_KEY" not in os.environ or "GDRIVE_SERVICE_ACCOUNT" not in os.environ:
         print("❗ Missing OPENROUTER_API_KEY or GDRIVE_SERVICE_ACCOUNT", file=sys.stderr)
         sys.exit(1)
@@ -143,26 +152,21 @@ def main():
         print("No video tweets found yesterday.")
         return
 
-    # score them all
     scored = []
     for t in all_tw:
-        try:
-            sc = score_tweet(t["text"], api_key)
-        except Exception:
-            sc = 0.0
+        sc = score_tweet(t["text"], api_key)
         scored.append((t["url"], t["text"], sc))
         print(f"Tweet scored {sc:.1f}: {t['url']}")
 
-    # sort & take top N
     scored.sort(key=lambda x: x[2], reverse=True)
 
     workdir = Path(tempfile.mkdtemp(prefix="poly_"))
     dl = workdir / "downloads"; pr = workdir / "processed"
     dl.mkdir(); pr.mkdir()
 
-    done = 0
+    uploaded = 0
     for url, text, score in scored:
-        if done >= MAX_TO_UPLOAD:
+        if uploaded >= MAX_TO_UPLOAD:
             break
         print(f"\n➡️ Processing {url} (score {score:.1f})…")
         try:
@@ -170,13 +174,14 @@ def main():
             has_audio, dur = probe_video(raw)
             if not has_audio or dur < MIN_DURATION or dur > MAX_DURATION:
                 print("⛔ filtered by audio/duration")
-                raw.unlink(); continue
+                raw.unlink()
+                continue
 
             tmp = pr / f"{raw.stem}_c.mp4"
             convert_to_portrait(raw, tmp)
             raw.unlink()
 
-            # headline
+            # generate & sanitize headline
             hl = requests.post(
                 OPENROUTER_URL,
                 headers={"Authorization": f"Bearer {api_key}"},
@@ -195,18 +200,17 @@ def main():
             upload_file(drive, folder, final)
             final.unlink()
             print(f"✅ Uploaded {safe}.mp4")
-            done += 1
+            uploaded += 1
 
         except Exception as e:
             print(f"⚠️ skip {url}: {e}", file=sys.stderr)
-            continue
 
     # cleanup
     for d in (dl, pr):
         for f in d.iterdir(): f.unlink()
         d.rmdir()
     workdir.rmdir()
-    print(f"\nFinished. {done} videos uploaded.")
+    print(f"\nFinished. {uploaded} videos uploaded.")
 
 if __name__ == "__main__":
     main()
