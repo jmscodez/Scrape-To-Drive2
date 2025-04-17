@@ -2,7 +2,7 @@ name: Run NFL Video Bot
 
 on:
   schedule:
-    - cron: '30 14 * * *'  # 10:30 AM EST (14:30 UTC)
+    - cron: '30 14 * * *'  # 10:30 AM EST
   workflow_dispatch:
 
 jobs:
@@ -21,12 +21,22 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        # Install yt-dlp nightly (with all extras) so force_ipv4 & latest extractors are available
         pip install -U --pre "yt-dlp[all]"
-        # Then install the rest of your requirements
         pip install -r requirements.txt
         sudo apt-get update
         sudo apt-get install -y ffmpeg
+
+    - name: Merge Reddit & YouTube cookies
+      run: |
+        # preserve the Netscape header
+        head -n 3 cookies.txt > merged_cookies.txt
+        # append the rest of reddit cookies
+        tail -n +4 cookies.txt >> merged_cookies.txt
+        # append the rest of YouTube cookies
+        tail -n +4 YT_Cookies.txt >> merged_cookies.txt
+        # overwrite cookies.txt
+        mv merged_cookies.txt cookies.txt
+        echo "✅ cookies.txt now contains both Reddit & YouTube cookies"
 
     - name: Run NFL-2 Video Bot
       env:
