@@ -160,7 +160,7 @@ def generate_headline(post_title):
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "google/gemma-2-9b-it",
+            "model": "google/gemini-2.0-flash-lite-001",
             "messages": [
                 {"role":"system","content":"You are a social media expert who creates viral TikTok captions for NFL content."},
                 {"role":"user","content":prompt}
