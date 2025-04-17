@@ -5,14 +5,13 @@ import json
 import datetime
 import subprocess
 import requests
-import textwrap
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
 
 import yt_dlp
 from google.oauth2 import service_account
@@ -26,10 +25,9 @@ chrome_options.add_argument("--no-sandbox")
 chrome_options.add_argument("--disable-gpu")
 chrome_options.add_argument("--disable-dev-shm-usage")
 chrome_options.binary_location = os.environ.get("CHROME_BIN", "/usr/bin/chromium-browser")
-driver = webdriver.Chrome(
-    executable_path=os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver"),
-    options=chrome_options
-)
+
+chrome_service = Service(os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver"))
+driver = webdriver.Chrome(service=chrome_service, options=chrome_options)
 
 # ------------------ Google Drive Integration ------------------
 SCOPES = ['https://www.googleapis.com/auth/drive']
@@ -158,9 +156,6 @@ def generate_short_title(text):
     return title[:100]
 
 # ------------------ Tweet Scraping ------------------
-def parse_tweet_id(url):
-    return url.rstrip('/').split('/')[-1]
-
 def tweet_has_video(url):
     driver.get(url)
     try:
@@ -189,7 +184,6 @@ def main():
     seen = set()
     collected = []
 
-    # collect URLs & texts
     for u in users:
         search = f"https://twitter.com/search?q=from%3A{u}%20filter%3Avideos%20since%3A{yesterday}&src=typed_query"
         driver.get(search)
@@ -201,15 +195,19 @@ def main():
                 text = get_tweet_text(url)
                 collected.append((url, text))
 
-    # process up to 5
     processed = 0
     for url, text in collected:
-        if processed >= 5: break
-        if not tweet_has_video(url): continue
+        if processed >= 5:
+            break
+        if not tweet_has_video(url):
+            continue
         vid, dur = download_video(url)
-        if not vid or not (10 <= dur <= 180): continue
+        if not vid or not (10 <= dur <= 180):
+            continue
 
-        t9 = convert_to_9_16_centered(vid); os.remove(vid)
+        t9 = convert_to_9_16_centered(vid)
+        os.remove(vid)
+
         title = sanitize_filename(generate_short_title(text))
         final = f"{title}.mp4"
         os.rename(t9, final)
