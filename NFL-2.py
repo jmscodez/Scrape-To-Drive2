@@ -75,8 +75,7 @@ def download_video(url):
         'format': 'bestvideo[height<=1080]+bestaudio/best',
         'merge_output_format': 'mp4',
         'quiet': True,
-        'cookiefile': 'YT_Cookies.txt',
-        'cookies_from_browser': ['chrome'],
+        'cookiefile': 'cookies.txt',
         'force_ipv4': True,
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
