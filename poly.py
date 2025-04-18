@@ -32,20 +32,28 @@ def setup_driver():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    
-    # Set explicit Chrome binary path
     chrome_options.binary_location = "/usr/bin/google-chrome"
     
     driver = webdriver.Chrome(options=chrome_options)
     
     if os.path.exists(COOKIES_FILE):
-        driver.get("https://twitter.com")
-        with open(COOKIES_FILE, 'r') as f:
-            cookies = json.load(f)
-            for cookie in cookies:
-                if 'sameSite' in cookie:
-                    del cookie['sameSite']
-                driver.add_cookie(cookie)
+        try:
+            driver.get("https://twitter.com")
+            with open(COOKIES_FILE, 'r') as f:
+                cookies = json.load(f)
+                print(f"Loaded {len(cookies)} cookies")
+                for cookie in cookies:
+                    if 'sameSite' in cookie:
+                        del cookie['sameSite']
+                    if 'expiry' in cookie:
+                        cookie['expiry'] = int(cookie['expiry'])
+                    driver.add_cookie(cookie)
+            print("Cookies added successfully")
+        except json.JSONDecodeError:
+            print("Invalid cookies file, using fresh session")
+        except Exception as e:
+            print(f"Error loading cookies: {str(e)}")
+    
     return driver
 
 def get_tweet_data(driver, account, since, until):
