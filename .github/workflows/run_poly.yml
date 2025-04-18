@@ -22,11 +22,16 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y ffmpeg wget
-        # Install Chrome
         wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
         echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
         sudo apt-get update
         sudo apt-get install -y google-chrome-stable
+
+    - name: Create empty cookies file if missing
+      run: |
+        if [ ! -f cookies.txt ]; then
+            echo "[]" > cookies.txt
+        fi
 
     - name: Install Python dependencies
       run: |
@@ -45,7 +50,6 @@ jobs:
         GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
         PYTHONHTTPSVERIFY: 0
       run: |
-        # Set ChromeDriver path
-        export CHROMEDRIVER_PATH=$(which chromedriver)
-        export GOOGLE_CHROME_BIN=$(which google-chrome-stable)
+        export CHROMEDRIVER_PATH=/usr/bin/chromedriver
+        export GOOGLE_CHROME_BIN=/usr/bin/google-chrome-stable
         python poly.py
