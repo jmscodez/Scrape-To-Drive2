@@ -1,173 +1,192 @@
-# poly.py
+#!/usr/bin/env python3
 import os
 import sys
-import json
-import shutil
+import time
+import datetime as dt
 import uuid
+import json
 import logging
 import subprocess
-import datetime as dt
 from tempfile import TemporaryDirectory
 
 import requests
-from snscrape.modules.twitter import TwitterSearchScraper
+import certifi
+import ssl
+
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-import certifi, os, ssl
-
-# Make absolutely sure every HTTPS library points to the fresh CA bundle
+# ─── SSL / Certifi fix ─────────────────────────────────────────
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 os.environ["SSL_CERT_FILE"]     = certifi.where()
-ssl._create_default_https_context = ssl._create_unverified_context  # last‑ditch blunt force
+ssl._create_default_https_context = ssl._create_unverified_context
 
+# ─── CONFIG ───────────────────────────────────────────────────
+ACCOUNTS       = ["disclosetv", "CollinRugg", "MarioNawfal"]
+MODEL          = "google/gemini-2.0-flash-lite-001"
+DATE_FMT       = "%Y-%m-%d"
+MIN_DURATION   = 10      # seconds
+MAX_DURATION   = 180     # seconds
+OUTPUT_W       = 1080
+OUTPUT_H       = 1920
+FOLDER_NAME    = "Poly"
+COOKIES_FILE   = "cookies.txt"
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# ─────────────────────────── CONFIG ────────────────────────────
-ACCOUNTS           = ["disclosetv", "CollinRugg", "MarioNawfal"]
-MODEL              = "google/gemini-2.0-flash-lite-001"
-HEADLINE_MAX_WORDS = 10
-MIN_DURATION       = 10        # seconds
-MAX_DURATION       = 180       # seconds
-OUTPUT_RES_W       = 1080
-OUTPUT_RES_H       = 1920
-FOLDER_NAME        = "Poly"
-COOKIES_FILE       = "cookies.txt"
-OPENROUTER_URL     = "https://openrouter.ai/api/v1/chat/completions"
-# ────────────────────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(levelname)s | %(message)s",
-    stream=sys.stdout,
-)
-
-API_KEY  = os.getenv("OPENROUTER_API_KEY")
-SA_JSON  = os.getenv("GDRIVE_SERVICE_ACCOUNT")
-
+# ─── SECRETS ──────────────────────────────────────────────────
+API_KEY = os.getenv("OPENROUTER_API_KEY")
+SA_JSON = os.getenv("GDRIVE_SERVICE_ACCOUNT")
 if not API_KEY or not SA_JSON:
     logging.error("Missing required secrets; aborting.")
     sys.exit(1)
 
-# write service‑account JSON to temp file
+# ─── GDRIVE AUTH ───────────────────────────────────────────────
 sa_path = os.path.join("/tmp", f"sa-{uuid.uuid4()}.json")
-with open(sa_path, "w", encoding="utf-8") as f:
+with open(sa_path, "w") as f:
     f.write(SA_JSON)
 
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 creds  = service_account.Credentials.from_service_account_file(sa_path, scopes=SCOPES)
 drive  = build("drive", "v3", credentials=creds, cache_discovery=False)
 
-def ensure_drive_folder(name: str) -> str:
-    query = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-    results = drive.files().list(q=query, fields="files(id,name)", pageSize=1).execute()
-    files = results.get("files", [])
+def ensure_drive_folder(name):
+    q = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    res = drive.files().list(q=q, fields="files(id)", pageSize=1).execute()
+    files = res.get("files", [])
     if files:
         return files[0]["id"]
-    file_metadata = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
-    folder = drive.files().create(body=file_metadata, fields="id").execute()
+    folder = drive.files().create(
+        body={"name": name, "mimeType": "application/vnd.google-apps.folder"},
+        fields="id"
+    ).execute()
     return folder["id"]
 
 FOLDER_ID = ensure_drive_folder(FOLDER_NAME)
 
-def openrouter_chat(prompt: str) -> str:
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": MODEL,
-        "messages": [
-            {"role": "user", "content": prompt.strip()}
-        ],
-        "max_tokens": 20,
-        "temperature": 0.2,
-    }
-    resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=60)
-    resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"].strip()
+# ─── SELENIUM SETUP ────────────────────────────────────────────
+options = Options()
+options.binary_location = "/usr/bin/chromium-browser"
+options.add_argument("--headless")
+options.add_argument("--no-sandbox")
+options.add_argument("--disable-dev-shm-usage")
+options.add_argument("--disable-gpu")
+driver = webdriver.Chrome(options=options)
 
-def score_tweet(text: str) -> float:
+def get_tweet_urls_for_user(username, since, max_scrolls=10):
+    search = f"https://twitter.com/search?q=from%3A{username}%20filter%3Avideos%20since%3A{since}&src=typed_query"
+    driver.get(search)
+    try:
+        WebDriverWait(driver, 10).until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "a[href*='/status/']")))
+    except TimeoutException:
+        logging.warning("Timeout loading tweets for %s", username)
+    urls = set()
+    for _ in range(max_scrolls):
+        links = driver.find_elements(By.CSS_SELECTOR, "a[href*='/status/']")
+        for a in links:
+            href = a.get_attribute("href")
+            if href and "/status/" in href and "analytics" not in href:
+                urls.add(href)
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
+    return list(urls)
+
+def tweet_has_video(url):
+    try:
+        driver.get(url)
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "video")))
+        return True
+    except Exception:
+        return False
+
+def get_tweet_text(url):
+    try:
+        driver.get(url)
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "article [data-testid='tweetText']"))
+        )
+        return driver.find_element(By.CSS_SELECTOR, "article [data-testid='tweetText']").text.replace("\n", " ")
+    except Exception:
+        return "Breaking news"
+
+def openrouter_chat(prompt):
+    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+    body = {
+        "model": MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 20,
+        "temperature": 0.2
+    }
+    r = requests.post(OPENROUTER_URL, headers=headers, json=body, timeout=60)
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"].strip()
+
+def score_tweet(text):
     prompt = (
-        "You are scoring tweets for relevance to today's U.S. political news. "
-        "Return a single number from 0–10 (0 = violent content or merely about a controversial "
-        "figure with no news value, 10 = extremely relevant breaking U.S. political news). "
-        f"Tweet:\n\"{text}\""
+        "Score this tweet for relevance to today's U.S. political news on a scale of 0–10. "
+        "0=violent or only about a controversial person, 10=breaking top-tier news. "
+        f"Tweet: \"{text}\""
     )
     try:
-        score_str = openrouter_chat(prompt)
-        return float(score_str.split()[0])
-    except Exception as e:
-        logging.warning("Scoring failed: %s", e)
+        s = openrouter_chat(prompt)
+        return float(s.split()[0])
+    except Exception:
         return 0.0
 
-def headline_from(text: str) -> str:
-    prompt = (
-        "Create a concise headline (under 10 words, no hashtags, title case) for this tweet video:\n"
-        f"{text}"
-    )
-    headline = openrouter_chat(prompt)
-    headline = headline.replace("/", "-")[:60]
-    return headline
+def headline_from(text):
+    prompt = "Create a concise headline (<10 words, no hashtags, title case) for this tweet:\n" + text
+    hl = openrouter_chat(prompt)
+    return "".join(c for c in hl if c.isalnum() or c in (" ", "-", "_"))[:60].strip()
 
-def run(cmd: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+def run(cmd):
+    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-def download_video(url: str, outdir: str) -> str | None:
+def download_video(url, outdir):
     name = str(uuid.uuid4())
-    out_tpl = os.path.join(outdir, f"{name}.%(ext)s")
-    cmd = [
-        "yt-dlp",
-        "--cookies", COOKIES_FILE,
-        "--force-ipv4",
-        "-o", out_tpl,
-        url,
-    ]
+    outtpl = os.path.join(outdir, f"{name}.%(ext)s")
+    cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "--force-ipv4", "-o", outtpl, url]
     res = run(cmd)
     if res.returncode != 0:
-        logging.warning("yt‑dlp failed: %s", res.stderr.splitlines()[-1] if res.stderr else res.stderr)
         return None
-    # find the downloaded file
     for ext in ("mp4", "mkv", "webm", "mov"):
-        fpath = os.path.join(outdir, f"{name}.{ext}")
-        if os.path.exists(fpath):
-            return fpath
+        p = os.path.join(outdir, f"{name}.{ext}")
+        if os.path.exists(p):
+            return p
     return None
 
-def validate_video(path: str) -> bool:
-    cmd = [
-        "ffprobe", "-v", "quiet", "-print_format", "json",
-        "-show_streams", "-show_format", path
-    ]
+def validate_video(path):
+    cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-show_format", path]
     res = run(cmd)
     if res.returncode != 0:
         return False
     info = json.loads(res.stdout)
-    duration = float(info["format"]["duration"])
-    if not (MIN_DURATION <= duration <= MAX_DURATION):
+    dur = float(info["format"]["duration"])
+    if not (MIN_DURATION <= dur <= MAX_DURATION):
         return False
-    has_audio = any(s["codec_type"] == "audio" for s in info["streams"])
-    return has_audio
+    return any(s.get("codec_type") == "audio" for s in info["streams"])
 
-def convert_to_portrait(src: str, dst: str) -> bool:
+def convert_to_portrait(src, dst):
     vf = (
-        f"scale={OUTPUT_RES_W}:{OUTPUT_RES_H}:force_original_aspect_ratio=decrease,"
-        f"pad={OUTPUT_RES_W}:{OUTPUT_RES_H}:(ow-iw)/2:(oh-ih)/2:black"
+        f"scale={OUTPUT_W}:{OUTPUT_H}:force_original_aspect_ratio=decrease,"
+        f"pad={OUTPUT_W}:{OUTPUT_H}:(ow-iw)/2:(oh-ih)/2:black"
     )
-    cmd = [
-        "ffmpeg", "-y", "-i", src,
-        "-vf", vf,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-        "-c:a", "copy",
-        dst
-    ]
-    res = run(cmd)
-    return res.returncode == 0
+    cmd = ["ffmpeg", "-y", "-i", src, "-vf", vf,
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+           "-c:a", "copy", dst]
+    return run(cmd).returncode == 0
 
-def upload_to_drive(path: str, name_on_drive: str) -> bool:
+def upload_to_drive(path, name):
     media = MediaFileUpload(path, mimetype="video/mp4", resumable=False)
-    body = {"name": name_on_drive, "parents": [FOLDER_ID]}
+    body = {"name": name, "parents": [FOLDER_ID]}
     try:
         drive.files().create(media_body=media, body=body, fields="id").execute()
         return True
@@ -175,62 +194,37 @@ def upload_to_drive(path: str, name_on_drive: str) -> bool:
         logging.warning("Drive upload failed: %s", e)
         return False
 
-def sanitize_filename(name: str) -> str:
-    return "".join(c for c in name if c.isalnum() or c in (" ", "-", "_")).rstrip()
+def main():
+    today = dt.datetime.utcnow().date()
+    since = (today - dt.timedelta(days=1)).strftime(DATE_FMT)
 
-def gather_tweets() -> list[dict]:
-    today   = dt.datetime.utcnow().date()
-    yday    = today - dt.timedelta(days=1)
-    since   = yday.strftime("%Y-%m-%d")
-    until   = today.strftime("%Y-%m-%d")
-    tweets  = []
-
+    tweets = []
     for acct in ACCOUNTS:
-        q = f"from:{acct} since:{since} until:{until} filter:videos"
-        logging.info("Scraping %s", q)
-        try:
-            for tw in TwitterSearchScraper(q).get_items():
-                tweets.append(
-                    {"url": tw.url, "text": tw.content.replace("\n", " ")}
-                )
-        except Exception as e:
-            logging.warning("Scraping failed for %s: %s", acct, e)
+        for url in get_tweet_urls_for_user(acct, since):
+            tweets.append({"url": url, "text": get_tweet_text(url)})
 
-    logging.info("Collected %d candidate tweets", len(tweets))
-    return tweets
-
-def main() -> None:
-    tweets = gather_tweets()
     for t in tweets:
         t["score"] = score_tweet(t["text"])
     tweets.sort(key=lambda x: x["score"], reverse=True)
 
     uploaded = 0
     with TemporaryDirectory(prefix="poly_") as workdir:
-        for tw in tweets:
+        for t in tweets:
             if uploaded >= 5:
                 break
-            logging.info("Processing tweet %s (score %.1f)", tw["url"], tw["score"])
-
-            raw_path = download_video(tw["url"], workdir)
-            if not raw_path:
+            url = t["url"]
+            text = t["text"]
+            if not tweet_has_video(url):
                 continue
-            if not validate_video(raw_path):
-                logging.info("Video failed validation")
+            raw = download_video(url, workdir)
+            if not raw or not validate_video(raw):
                 continue
-
-            headline = sanitize_filename(headline_from(tw["text"]))
-            final_mp4 = os.path.join(workdir, f"{headline}.mp4")
-
-            if not convert_to_portrait(raw_path, final_mp4):
-                logging.info("FFmpeg conversion failed")
+            hl = headline_from(text)
+            final = os.path.join(workdir, f"{hl}.mp4")
+            if not convert_to_portrait(raw, final):
                 continue
-
-            if upload_to_drive(final_mp4, f"{headline}.mp4"):
+            if upload_to_drive(final, f"{hl}.mp4"):
                 uploaded += 1
-                logging.info("Uploaded: %s", headline)
-            else:
-                logging.info("Upload failed")
 
     logging.info("Uploaded %d videos", uploaded)
 
@@ -238,6 +232,6 @@ if __name__ == "__main__":
     try:
         main()
     finally:
-        # Clean tmp service‑account file
+        driver.quit()
         if os.path.exists(sa_path):
             os.remove(sa_path)
