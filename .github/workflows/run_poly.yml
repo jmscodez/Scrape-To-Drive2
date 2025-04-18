@@ -27,20 +27,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install --pre 'yt-dlp[all]'
-          pip install snscrape requests==2.31.0 'urllib3<2.2' certifi \
-                     google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
-          # refresh CA store so every library sees certifi’s bundle
-          CERT_BUNDLE=$(python - <<'PY'
-import certifi, sys, json
+          - name: Install Python dependencies
+      run: |
+        # --- Python packages ---
+        python -m pip install --upgrade pip
+        pip install --pre 'yt-dlp[all]'
+        pip install snscrape requests==2.31.0 'urllib3<2.2' certifi \
+                   google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+
+        # --- Trust‑store fix (NEW) ---
+        CERT=$(python - <<'PY'
+import certifi, sys
 print(certifi.where())
 PY
 )
-          sudo cp "$CERT_BUNDLE" /etc/ssl/certs/ca-certificates.crt
-          sudo update-ca-certificates
+        sudo cp "$CERT" /etc/ssl/certs/ca-certificates.crt    # overwrite bundle
+        sudo update-ca-certificates                           # refresh OpenSSL cache
+        echo "REQUESTS_CA_BUNDLE=$CERT" >> $GITHUB_ENV        # export for Python libs
+        echo "SSL_CERT_FILE=$CERT"     >> $GITHUB_ENV
+
 
       - name: Run Poly script
         run: python poly.py
