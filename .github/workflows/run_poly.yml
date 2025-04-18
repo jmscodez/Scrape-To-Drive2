@@ -1,36 +1,72 @@
 # .github/workflows/run_poly.yml
-name: Run Poly Video Bot
+name: Run Poly Video Scraper
 
 on:
   schedule:
-    - cron: '30 14 * * *'  # 10:30 AM EST (14:30 UTC)
-  workflow_dispatch:
+    # Runs every day at 10:30 AM EST (which is 14:30 UTC during standard time, or 15:30 UTC during daylight saving time)
+    # Cron syntax is UTC. Adjust if DST matters precisely, or keep as 14:30 UTC year-round.
+    # Using 14:30 UTC for consistency.
+    - cron: '30 14 * * *'
+  workflow_dispatch: # Allows manual triggering
 
 jobs:
-  run-bot:
+  scrape-and-process:
     runs-on: ubuntu-latest
+    # Set job-level environment variables
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }} # Passed as a string
+      PYTHONHTTPSVERIFY: "0" # Blunt SSL bypass requested
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install --pre "yt-dlp[all]"
-        pip install requests==2.31.0 "urllib3<2.2" certifi \
-                    google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg
+      - name: Install system dependencies (ffmpeg)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg
 
-    - name: Run Poly Video Bot
-      env:
-        OPENROUTER_API_KEY:     ${{ secrets.OPENROUTER_API_KEY }}
-        GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
-        PYTHONHTTPSVERIFY:      0
-      run: python poly.py
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Install snscrape directly from GitHub for latest fixes (often needed for Twitter changes)
+          pip install git+https://github.com/JustAnotherArchivist/snscrape.git
+          # Install latest pre-release yt-dlp with all optional dependencies
+          pip install --pre yt-dlp[all]
+          # Install specific requests/urllib3 versions for stability
+          pip install requests==2.31.0 urllib3<2.2
+          # Install certifi and Google client libraries
+          pip install certifi google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+
+      - name: Update CA certificates with certifi bundle
+        run: |
+          # Find certifi's bundle path within the Python environment
+          CERTIFI_PATH=$(python -m certifi)
+          echo "Certifi bundle found at: $CERTIFI_PATH"
+          # Copy it to the system location (requires sudo)
+          sudo cp "$CERTIFI_PATH" /usr/local/share/ca-certificates/certifi.crt
+          # Update the system certificates
+          sudo update-ca-certificates
+          echo "System CA certificates updated with Certifi bundle."
+
+      - name: Verify environment variables (optional check)
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then echo "OPENROUTER_API_KEY secret is not set!"; exit 1; fi
+          if [ -z "$GDRIVE_SERVICE_ACCOUNT" ]; then echo "GDRIVE_SERVICE_ACCOUNT secret is not set!"; exit 1; fi
+          echo "Required secrets seem to be present."
+
+      - name: Run the poly.py script
+        run: python poly.py
+
+      - name: Clean up workspace (optional)
+        if: always() # Always run cleanup, even if the script fails
+        run: |
+          echo "Cleaning up workspace..."
+          # The script itself should clean its temp dir, but we can add extra cleanup if needed
+          # rm -rf temp_poly_processing # Example if script failed before its own cleanup
