@@ -16,6 +16,14 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
+import certifi, os, ssl
+
+# Make absolutely sure every HTTPS library points to the fresh CA bundle
+os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
+os.environ["SSL_CERT_FILE"]     = certifi.where()
+ssl._create_default_https_context = ssl._create_unverified_context  # last‑ditch blunt force
+
+
 # ─────────────────────────── CONFIG ────────────────────────────
 ACCOUNTS           = ["disclosetv", "CollinRugg", "MarioNawfal"]
 MODEL              = "google/gemini-2.0-flash-lite-001"
