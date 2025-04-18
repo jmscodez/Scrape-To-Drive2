@@ -25,14 +25,13 @@ def run_command(cmd):
         return None
 
 def get_tweet_data(account, since, until):
+    query = f"from:{account} filter:videos since:{since} until:{until}"
     cmd = [
         "snscrape",
         "--jsonl",
         "--max-results", "50",
-        "twitter-user",
-        f"from:{account}",
-        f"since:{since}",
-        f"until:{until}"
+        "twitter-search",
+        query
     ]
     output = run_command(cmd)
     if not output:
@@ -47,7 +46,7 @@ def get_tweet_data(account, since, until):
                     "url": tweet['url'],
                     "text": tweet['content']
                 })
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, KeyError):
             continue
     return tweets
 
@@ -168,12 +167,11 @@ def upload_to_drive(file_path, headline):
     except Exception as e:
         print(f"Drive upload failed: {e}")
         return False
+    finally:
+        if os.path.exists(SERVICE_ACCOUNT_FILE):
+            os.remove(SERVICE_ACCOUNT_FILE)
 
 def main():
-    # Setup service account file
-    with open(SERVICE_ACCOUNT_FILE, 'w') as f:
-        f.write(os.environ['GDRIVE_SERVICE_ACCOUNT'])
-
     # Calculate time window
     today = datetime.datetime.utcnow().date()
     yesterday = today - datetime.timedelta(days=1)
@@ -183,7 +181,10 @@ def main():
     accounts = ["disclosetv", "CollinRugg", "MarioNawfal"]
     all_tweets = []
     for account in accounts:
-        all_tweets.extend(get_tweet_data(account, time_window[0], time_window[1]))
+        print(f"Scraping {account}...")
+        tweets = get_tweet_data(account, time_window[0], time_window[1])
+        print(f"Found {len(tweets)} videos")
+        all_tweets.extend(tweets)
 
     # Score and sort
     scored = []
@@ -198,6 +199,7 @@ def main():
     uploaded = 0
     for score, url, text in top_tweets:
         try:
+            print(f"Processing {url}")
             video_path = download_video(url)
             if not video_path:
                 continue
