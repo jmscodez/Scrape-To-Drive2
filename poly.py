@@ -7,6 +7,7 @@ import re
 import tempfile
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
+from googleapiclient.http import MediaFileUpload
 
 # Environment checks
 if not os.environ.get("OPENROUTER_API_KEY") or not os.environ.get("GDRIVE_SERVICE_ACCOUNT"):
