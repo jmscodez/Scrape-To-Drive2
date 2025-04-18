@@ -2,37 +2,37 @@ name: Run Poly Bot
 
 on:
   schedule:
-    - cron: '30 14 * * *'        # 10:30 AM EST
+    - cron: '30 14 * * *'      # 10:30 AM EST
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      OPENROUTER_API_KEY:     ${{ secrets.OPENROUTER_API_KEY }}
+      GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install deps
+      - name: Install libs
         run: |
-          sudo apt-get update
+          sudo apt-get update -qq
           sudo apt-get install -y ffmpeg
-          python -m pip install --upgrade pip
-          pip install certifi snscrape "yt-dlp[all]" \
-                      requests google-api-python-client google-auth
+          python -m pip install -q --upgrade pip
+          pip install certifi                                   # latest CA bundle
+          pip install requests==2.31.0 urllib3<2.2              # pin proven combo
+          pip install snscrape "yt-dlp[all]" google-api-python-client google-auth
 
-      - name: Export CERTIFI path
-        id: certifi
-        run: echo "CERT=$(python -c 'import certifi,sys; print(certifi.where())')" >> "$GITHUB_ENV"
+      - name: Export CA path for requests + urllib3
+        run: echo "CERT_PATH=$(python -m certifi)" >> $GITHUB_ENV
 
       - name: Run bot
         env:
-          OPENROUTER_API_KEY:     ${{ secrets.OPENROUTER_API_KEY }}
-          GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
-          REQUESTS_CA_BUNDLE:     ${{ env.CERT }}
-          SSL_CERT_FILE:          ${{ env.CERT }}
+          REQUESTS_CA_BUNDLE: ${{ env.CERT_PATH }}
+          SSL_CERT_FILE:      ${{ env.CERT_PATH }}
         run: python poly.py
