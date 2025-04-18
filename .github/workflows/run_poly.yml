@@ -2,37 +2,52 @@ name: Run Poly Bot
 
 on:
   schedule:
-    - cron: '30 14 * * *'      # 10:30 AM EST
+    - cron: '30 14 * * *'           # 10:30 AM EST every day
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    # --- GLOBAL ENV -------------------------------
+    # 1) Disable SSL verification everywhere
     env:
+      PYTHONHTTPSVERIFY: '0'
       OPENROUTER_API_KEY:     ${{ secrets.OPENROUTER_API_KEY }}
       GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
 
     steps:
+      # Checkout repo
       - uses: actions/checkout@v4
 
+      # Python 3.10
       - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install libs
+      # System packages
+      - name: Install ffmpeg
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg
-          python -m pip install -q --upgrade pip
-          pip install certifi                                   # latest CA bundle
-          pip install requests==2.31.0 urllib3<2.2              # pin proven combo
-          pip install snscrape "yt-dlp[all]" google-api-python-client google-auth
 
-      - name: Export CA path for requests + urllib3
-        run: echo "CERT_PATH=$(python -m certifi)" >> $GITHUB_ENV
+      # Python packages (stable versions)
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install certifi
+          pip install requests==2.31.0 urllib3<2.2
+          pip install snscrape "yt-dlp[all]"
+          pip install google-api-python-client google-auth
 
-      - name: Run bot
-        env:
-          REQUESTS_CA_BUNDLE: ${{ env.CERT_PATH }}
-          SSL_CERT_FILE:      ${{ env.CERT_PATH }}
+      # 2) Copy certifi’s bundle over system bundle (optional, keeps TLS valid)
+      - name: Replace system CA bundle with certifi
+        run: |
+          CERT_PATH=$(python -m certifi)
+          echo "Using certifi bundle: $CERT_PATH"
+          sudo cp "$CERT_PATH" /etc/ssl/certs/ca-certificates.crt
+          sudo update-ca-certificates
+
+      # Run the bot script
+      - name: Run poly.py
         run: python poly.py
