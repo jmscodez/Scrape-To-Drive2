@@ -1,8 +1,8 @@
-name: Run Poly Video Bot
+name: Run Poly Bot
 
 on:
   schedule:
-    - cron: '30 14 * * *'   # 10:30 AM EST
+    - cron: '30 14 * * *'        # 10:30 AM EST
   workflow_dispatch:
 
 jobs:
@@ -12,25 +12,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install system deps
+      - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg ca-certificates
-
-      - name: Install Python deps
-        run: |
+          sudo apt-get install -y ffmpeg
           python -m pip install --upgrade pip
-          pip install certifi snscrape
-          pip install -U --pre "yt-dlp[all]"
-          pip install requests google-api-python-client google-auth
+          pip install certifi snscrape "yt-dlp[all]" \
+                      requests google-api-python-client google-auth
 
-      - name: Run poly.py
+      - name: Export CERTIFI path
+        id: certifi
+        run: echo "CERT=$(python -c 'import certifi,sys; print(certifi.where())')" >> "$GITHUB_ENV"
+
+      - name: Run bot
         env:
           OPENROUTER_API_KEY:     ${{ secrets.OPENROUTER_API_KEY }}
           GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
+          REQUESTS_CA_BUNDLE:     ${{ env.CERT }}
+          SSL_CERT_FILE:          ${{ env.CERT }}
         run: python poly.py
