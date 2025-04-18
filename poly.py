@@ -1,3 +1,9 @@
+# poly.py  ── global “trust‑nothing” switch ────────────────────────────────────
+import ssl, urllib3
+ssl._create_default_https_context = ssl._create_unverified_context
+urllib3.disable_warnings()
+
+# ── rest of the script (unchanged functional code) ────────────────────────────
 import os, sys, json, re, tempfile, datetime, subprocess
 from pathlib import Path
 import requests
