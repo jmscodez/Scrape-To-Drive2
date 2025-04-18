@@ -1,4 +1,3 @@
-# .github/workflows/run_poly.yml
 name: Run Poly Bot
 
 on:
@@ -10,9 +9,9 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     env:
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENROUTER_API_KEY:   ${{ secrets.OPENROUTER_API_KEY }}
       GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
-      PYTHONHTTPSVERIFY: 0
+      PYTHONHTTPSVERIFY:     0
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
