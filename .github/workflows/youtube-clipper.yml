@@ -1,27 +1,28 @@
-name: Run YouTube Clipper & Upload
+name: Run YouTube Clipper & Upload to Drive
 
 on:
   schedule:
-    - cron: '30 14 * * *'       # 10:30 AM Eastern
+    - cron: '30 14 * * *'       # 10:30 AM Eastern time daily
   workflow_dispatch:
     inputs:
       urls:
-        description: 'Space-separated YouTube URLs'
+        description: 'Space-separated YouTube URLs to process'
         required: true
         default: 'https://www.youtube.com/watch?v=52xav2LdFuk'
       output:
-        description: 'Output filename'
+        description: 'Final output filename'
         required: false
         default: 'highlights_combined.mp4'
 
 jobs:
-  build-and-run:
+  clip_and_upload:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.10
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
@@ -29,7 +30,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install yt_dlp scenedetect pydub opencv-python google-api-python-client google-auth
+          pip install yt_dlp scenedetect pydub opencv-python-headless \
+                      google-api-python-client google-auth
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
