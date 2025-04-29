@@ -8,7 +8,7 @@ from google.oauth2.service_account import Credentials as SACreds
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 
-# ── 1) YouTube: load OAuth token for Impulse from secret ─────────────────────
+# ── 1) YouTube: load OAuth token for Impulse from secret ────────────────
 yt_info = json.loads(os.environ['IMPULSE_YT_TOKEN'])
 creds   = Credentials.from_authorized_user_info(
     yt_info,
@@ -18,7 +18,7 @@ if creds.expired and creds.refresh_token:
     creds.refresh(Request())
 youtube = build('youtube', 'v3', credentials=creds)
 
-# ── 2) Drive: load service account from secret ──────────────────────────────
+# ── 2) Drive: load service account from secret ──────────────────────────
 sa_info     = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT'])
 drive_creds = SACreds.from_service_account_info(
     sa_info,
@@ -26,10 +26,10 @@ drive_creds = SACreds.from_service_account_info(
 )
 drive_service = build('drive', 'v3', credentials=drive_creds)
 
-# ── 3) Folder ID for “Impulse” videos ────────────────────────────────────────
-FOLDER_ID = '<YOUR_IMPULSE_FOLDER_ID>'  # ← replace with your actual Drive folder ID
+# ── 3) Folder ID for “Impulse” videos ───────────────────────────────────
+FOLDER_ID = '1IjWmMJJKp3BMhVINrSbwkL1HIT5277WF'
 
-# ── 4) List & process every file in that folder ─────────────────────────────
+# ── 4) List & process every file in that folder ─────────────────────────
 page_token = None
 while True:
     resp = drive_service.files().list(
@@ -58,7 +58,6 @@ while True:
                 status, done = downloader.next_chunk()
                 if status:
                     print(f"   Download {int(status.progress() * 100)}%")
-        fh.close()
 
         # Sanitize & truncate title
         base_title = os.path.splitext(name)[0]
