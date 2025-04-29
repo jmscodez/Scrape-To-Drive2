@@ -1,55 +1,31 @@
-name: Daily Video Processor
+name: Run Poly Video Bot
 
 on:
   schedule:
-    - cron: '30 15 * * *'  # 10:30 AM EST (15:30 UTC)
+    - cron: '30 14 * * *'  # Adjust as needed (10:30 AM EST = 14:30 UTC)
   workflow_dispatch:
 
 jobs:
-  process_videos:
+  run-bot:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v5
+    - name: Set up Python
+      uses: actions/setup-python@v4
       with:
         python-version: '3.10'
 
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg wget
-        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-
-    - name: Create empty cookies file if missing
-      run: |
-        if [ ! -f cookies.txt ]; then
-            echo "[]" > cookies.txt
-        fi
-
-    - name: Install Python dependencies
+    - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install yt-dlp[all] --pre
-        pip install requests==2.31.0 "urllib3<2.2" certifi google-api-python-client google-auth selenium webdriver-manager
+        pip install -r requirements.txt
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
 
-    - name: Configure SSL
-      run: |
-        sudo cp $(python -c 'import certifi; print(certifi.where())') /etc/ssl/certs/ca-certificates.crt
-        sudo update-ca-certificates
-
-    - name: Run video processor
+    - name: Run Poly Video Bot
       env:
-        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
-        PYTHONHTTPSVERIFY: 0
-      run: |
-        export CHROMEDRIVER_PATH=/usr/bin/chromedriver
-        export GOOGLE_CHROME_BIN=/usr/bin/google-chrome-stable
-        python poly.py
+      run: python poly.py
