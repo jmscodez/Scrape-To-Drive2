@@ -4,7 +4,7 @@ import json
 import io
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+from google.oauth2.service_account import Credentials as SACreds
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 
@@ -20,7 +20,7 @@ youtube = build('youtube', 'v3', credentials=creds)
 
 # ── 2) Drive: load service account from secret ──────────────────────────────
 sa_info     = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT'])
-drive_creds = ServiceAccountCredentials.from_service_account_info(
+drive_creds = SACreds.from_service_account_info(
     sa_info,
     scopes=["https://www.googleapis.com/auth/drive"]
 )
@@ -55,13 +55,19 @@ with io.FileIO(name, 'wb') as fh:
         if status:
             print(f"   Download {int(status.progress() * 100)}%")
 
-# ── 6) Upload as YouTube Short ──────────────────────────────────────────────
-print(f"📤 Uploading {name} to YouTube Shorts")
+# ── 6) Sanitize and truncate title ──────────────────────────────────────────
+base_title = os.path.splitext(name)[0]
+if len(base_title) > 90:
+    base_title = base_title[:87].rstrip() + "..."
+title = f"{base_title} #shorts"
+
+# ── 7) Upload as YouTube Short ──────────────────────────────────────────────
+print(f"📤 Uploading {name} as YouTube Short with title: {title}")
 body = {
     'snippet': {
-        'title':       f"{name} #shorts",
+        'title':       title,
         'description': 'Enjoy! #ViralPups #Dogs #Shorts',
-        'tags':        ['ViralPups', 'Dogs', 'Shorts']
+        'tags':        ['ViralPups','Dogs','Shorts']
     },
     'status': {
         'privacyStatus': 'public'
@@ -74,10 +80,10 @@ youtube.videos().insert(
     media_body=media
 ).execute()
 
-# ── 7) Delete from Drive ────────────────────────────────────────────────────
+# ── 8) Delete from Drive ────────────────────────────────────────────────────
 print(f"🗑️ Deleting {name} from Drive")
 drive_service.files().delete(fileId=file_id).execute()
 
-# ── 8) Remove local file ────────────────────────────────────────────────────
+# ── 9) Remove local file ───────────────────────────────────────────────────
 os.remove(name)
 print(f"✅ Completed upload and cleanup for {name}")
