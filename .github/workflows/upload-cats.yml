@@ -1,0 +1,30 @@
+# .github/workflows/upload-cats.yml
+name: Upload Cats Videos to YouTube
+
+on:
+  schedule:
+    - cron: '0 22 * * *'   # daily at 22:00 UTC = 6 PM ET
+  workflow_dispatch:
+
+jobs:
+  upload-cats:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install google-api-python-client google-auth google-auth-httplib2
+
+      - name: Run Cats uploader
+        env:
+          CATS_YT_TOKEN:         ${{ secrets.CATS_YT_TOKEN }}
+          GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
+        run: python upload_cats_videos.py
