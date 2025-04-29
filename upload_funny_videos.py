@@ -2,27 +2,23 @@
 import os
 import json
 import io
-from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google.oauth2.service_account import Credentials as SACreds
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 
-# ── 1) YouTube & User-Drive via user OAuth creds ────────────────────────────
+# ── 1) YouTube: load OAuth token for Funny from secret ─────────────────────
 yt_info = json.loads(os.environ['FUNNY_YT_TOKEN'])
 creds   = Credentials.from_authorized_user_info(
     yt_info,
-    scopes=[
-        "https://www.googleapis.com/auth/youtube.upload",
-        "https://www.googleapis.com/auth/drive"
-    ]
+    scopes=["https://www.googleapis.com/auth/youtube.upload"]
 )
 if creds.expired and creds.refresh_token:
     creds.refresh(Request())
-youtube   = build('youtube', 'v3', credentials=creds)
-user_drive = build('drive', 'v3', credentials=creds)
+youtube = build('youtube', 'v3', credentials=creds)
 
-# ── 2) Service-Account Drive client for listing & download ─────────────────
+# ── 2) Drive: load service‐account key for all Drive operations ────────────
 sa_info     = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT'])
 drive_creds = SACreds.from_service_account_info(
     sa_info,
@@ -30,10 +26,10 @@ drive_creds = SACreds.from_service_account_info(
 )
 drive_service = build('drive', 'v3', credentials=drive_creds)
 
-# ── 3) “funny” folder ID ─────────────────────────────────────────────────────
+# ── 3) Folder ID for “funny” videos ────────────────────────────────────────
 FOLDER_ID = '1wQjIVp5PCKIGhRYTrIXO5fzcWH4tMFXy'
 
-# ── 4) List & process every file ────────────────────────────────────────────
+# ── 4) List & process every file in that folder ───────────────────────────
 page_token = None
 while True:
     resp = drive_service.files().list(
@@ -53,8 +49,8 @@ while True:
         name    = file['name']
         print(f"🔽 Downloading {name}")
 
-        # Download
-        request = drive_service.files().get_media(fileId=file_id)
+        # Download to local
+        request    = drive_service.files().get_media(fileId=file_id)
         with io.FileIO(name, 'wb') as fh:
             downloader = MediaIoBaseDownload(fh, request)
             done = False
@@ -69,7 +65,7 @@ while True:
             base = base[:87].rstrip() + "..."
         title = f"{base} #shorts"
 
-        # Upload
+        # Upload to YouTube
         print(f"📤 Uploading {name} as YouTube Short with title: {title}")
         body = {
             'snippet': {
@@ -88,14 +84,11 @@ while True:
             media_body=media
         ).execute()
 
-        # Delete via user creds
-        print(f"🗑️ Deleting {name} from Drive via user credentials")
-        try:
-            user_drive.files().delete(fileId=file_id).execute()
-        except Exception as e:
-            print("⚠️ User-drive delete failed:", e)
+        # Delete from Drive using service account
+        print(f"🗑️ Deleting {name} from Drive via service account")
+        drive_service.files().delete(fileId=file_id).execute()
 
-        # Cleanup local
+        # Cleanup local copy
         os.remove(name)
         print(f"✅ Completed upload and cleanup for {name}")
 
