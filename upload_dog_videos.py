@@ -15,7 +15,7 @@ if creds.expired and creds.refresh_token:
 youtube = build('youtube', 'v3', credentials=creds)
 
 # ── 2) Load Drive service-account key from secret ────────────────────────
-sa_info = json.loads(os.environ['DRIVE_SA_KEY'])
+sa_info = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT'])
 drive_creds = ServiceAccountCredentials.from_service_account_info(
     sa_info, scopes=["https://www.googleapis.com/auth/drive"]
 )
