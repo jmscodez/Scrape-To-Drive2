@@ -1,0 +1,29 @@
+name: Upload Impulse Videos to YouTube
+
+on:
+  schedule:
+    - cron: '0 22 * * *'   # daily at 22:00 UTC = 6 PM ET
+  workflow_dispatch:
+
+jobs:
+  upload-impulse:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install google-api-python-client google-auth google-auth-httplib2
+
+      - name: Run Impulse uploader
+        env:
+          IMPULSE_YT_TOKEN:       ${{ secrets.IMPULSE_YT_TOKEN }}
+          GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
+        run: python upload_impulse_videos.py
