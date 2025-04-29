@@ -9,21 +9,17 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 from googleapiclient.errors import HttpError
 
-# ── 1) YouTube & user-Drive via user OAuth creds ────────────────────────────
+# 1) YouTube auth via user OAuth creds (only upload scope needed)
 yt_info = json.loads(os.environ['CATS_YT_TOKEN'])
 creds   = Credentials.from_authorized_user_info(
     yt_info,
-    scopes=[
-        "https://www.googleapis.com/auth/youtube.upload",
-        "https://www.googleapis.com/auth/drive"
-    ]
+    scopes=["https://www.googleapis.com/auth/youtube.upload"]
 )
 if creds.expired and creds.refresh_token:
     creds.refresh(Request())
-youtube   = build('youtube', 'v3', credentials=creds)
-user_drive = build('drive', 'v3', credentials=creds)
+youtube = build('youtube', 'v3', credentials=creds)
 
-# ── 2) Service-Account Drive for listing & download ─────────────────────────
+# 2) Drive via service-account for all Drive operations
 sa_info     = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT'])
 drive_creds = SACreds.from_service_account_info(
     sa_info,
@@ -31,10 +27,10 @@ drive_creds = SACreds.from_service_account_info(
 )
 drive_service = build('drive', 'v3', credentials=drive_creds)
 
-# ── 3) “Cats” folder ID ──────────────────────────────────────────────────────
+# 3) “Cats” folder ID
 FOLDER_ID = '15CwudXXMNqIrkw21PWYErNtsU2asuL5A'
 
-# ── 4) List & process every file in that folder ────────────────────────────
+# 4) List & process every file
 page_token = None
 while True:
     resp = drive_service.files().list(
@@ -54,7 +50,7 @@ while True:
         name    = file['name']
         print(f"🔽 Downloading {name}")
 
-        # Download
+        # Download via service account
         request = drive_service.files().get_media(fileId=file_id)
         with io.FileIO(name, 'wb') as fh:
             downloader = MediaIoBaseDownload(fh, request)
@@ -70,21 +66,20 @@ while True:
             base = base[:87].rstrip() + "..."
         title = f"{base} #shorts"
 
-        # Upload
+        # Upload to YouTube
         print(f"📤 Uploading {name} as YouTube Short with title: {title}")
         try:
-            body = {
-                'snippet': {
-                    'title':       title,
-                    'description': 'Enjoy! #Cats #Shorts',
-                    'tags':        ['Cats', 'Shorts']
-                },
-                'status': {'privacyStatus':'public'}
-            }
             media = MediaFileUpload(name, mimetype='video/*')
             youtube.videos().insert(
                 part='snippet,status',
-                body=body,
+                body={
+                    'snippet': {
+                        'title':       title,
+                        'description': 'Enjoy! #Cats #Shorts',
+                        'tags':        ['Cats', 'Shorts']
+                    },
+                    'status': {'privacyStatus':'public'}
+                },
                 media_body=media
             ).execute()
         except HttpError as e:
@@ -92,14 +87,14 @@ while True:
             os.remove(name)
             continue
 
-        # Delete via user creds
-        print(f"🗑️ Deleting {name} from Drive via user credentials")
+        # Delete from Drive via service account
+        print(f"🗑️ Deleting {name} from Drive via service account")
         try:
-            user_drive.files().delete(fileId=file_id).execute()
+            drive_service.files().delete(fileId=file_id).execute()
         except HttpError as e:
-            print("⚠️ Could not delete via user-drive:", e)
+            print("⚠️ Could not delete via service account:", e)
 
-        # Cleanup local
+        # Cleanup local copy
         os.remove(name)
         print(f"✅ Completed upload & cleanup for {name}")
 
