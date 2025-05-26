@@ -1,8 +1,9 @@
 name: Cleanup Service Account Drive
 
 on:
+  workflow_dispatch:  # Manual trigger
   schedule:
-    - cron: '0 20 1,21 * *'  # Runs at 20:00 UTC on the 1st and 21st of every month
+    - cron: '0 20 1,21 * *'  # Runs at 20:00 UTC on the 1st and 21st of each month
 
 jobs:
   cleanup:
