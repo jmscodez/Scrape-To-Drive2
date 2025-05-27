@@ -1,4 +1,6 @@
-import os, subprocess, requests
+import os
+import subprocess
+import requests
 from yt_dlp import YoutubeDL
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -13,12 +15,8 @@ OPENROUTER_URL     = "https://openrouter.ai/api/v1/chat/completions"
 TMP_DIR = "temp_clips"
 os.makedirs(TMP_DIR, exist_ok=True)
 
-# ── 1) Fetch top scenes from OpenRouter ─────────────────────────────────────────
-def fetch_top_scenes(n=10):
-    prompt = (
-        f"List the top {n} funniest movie scenes of all time. "
-        "For each, respond as: Movie Title – [brief scene description]."
-    )
+# ── Helper: ask OpenRouter for scenes ───────────────────────────────────────────
+def fetch_scenes(prompt):
     resp = requests.post(
         OPENROUTER_URL,
         headers={
@@ -28,7 +26,7 @@ def fetch_top_scenes(n=10):
         json={
             "model": MODEL_ID,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 500,
+            "max_tokens": 400,
             "temperature": 0.7,
         }
     )
@@ -41,7 +39,21 @@ def fetch_top_scenes(n=10):
             scenes.append((movie.strip(), scene.strip()))
     return scenes
 
-# ── 2) Initialize Drive client ─────────────────────────────────────────────────
+# ── Build two lists: funny and classic ──────────────────────────────────────────
+def get_target_scenes():
+    funny_prompt = (
+        "List the single funniest movie scene of all time released in 1990 or later. "
+        "Respond as: Movie Title – [brief scene description]."
+    )
+    classic_prompt = (
+        "List the top two most iconic classic movie scenes of all time (any year). "
+        "Respond each as: Movie Title – [brief scene description]."
+    )
+    funny = fetch_scenes(funny_prompt)      # returns [(movie,scene)]
+    classic = fetch_scenes(classic_prompt)  # returns [(movie,scene), …]
+    return funny + classic                  # total of 3 items
+
+# ── Drive client init ───────────────────────────────────────────────────────────
 def init_drive():
     creds = Credentials.from_service_account_file(
         "service_account.json",
@@ -51,13 +63,13 @@ def init_drive():
 
 drive_service = init_drive()
 
-# ── 3) Check for duplicates in Drive ────────────────────────────────────────────
+# ── Check duplicate in Drive ────────────────────────────────────────────────────
 def already_uploaded(name):
     q = f"name='{name}' and '{DRIVE_FOLDER_ID}' in parents and trashed=false"
     res = drive_service.files().list(q=q, fields="files(id)").execute()
     return bool(res.get("files"))
 
-# ── 4) Download via yt-dlp ─────────────────────────────────────────────────────
+# ── Download from YouTube ───────────────────────────────────────────────────────
 def download_clip(search_term):
     opts = {
         "format": "bestvideo+bestaudio/best",
@@ -71,7 +83,7 @@ def download_clip(search_term):
         entry = info["entries"][0] if "entries" in info else info
         return ydl.prepare_filename(entry)
 
-# ── 5) Transform to 1080×1920 with blurred bars ─────────────────────────────────
+# ── Reformat video to 1080×1920 with blurred bars ───────────────────────────────
 def transform_clip(in_p, out_p):
     vf = (
         "scale=1080:-2,split=2[orig][bg];"
@@ -83,7 +95,7 @@ def transform_clip(in_p, out_p):
         check=True
     )
 
-# ── 6) Upload to Drive ─────────────────────────────────────────────────────────
+# ── Upload to Google Drive ────────────────────────────────────────────────────
 def upload_to_drive(local_path, name):
     if already_uploaded(name):
         print(f"Skipped (exists): {name}")
@@ -93,18 +105,19 @@ def upload_to_drive(local_path, name):
     drive_service.files().create(body=meta, media_body=media).execute()
     print(f"Uploaded: {name}")
 
-# ── Orchestration ──────────────────────────────────────────────────────────────
+# ── Main orchestration ─────────────────────────────────────────────────────────
 def main():
-    scenes = fetch_top_scenes()
+    scenes = get_target_scenes()  # 1 funny + 2 classic
     for movie, scene in scenes:
-        fname_safe = f"{movie} - {scene}.mp4".replace("/", "_")
-        print(f"→ {fname_safe}")
-        if already_uploaded(fname_safe):
+        fname = f"{movie} - {scene}.mp4".replace("/", "_")
+        print(f"→ Processing: {fname}")
+        if already_uploaded(fname):
+            print("   → Already uploaded, skipping.")
             continue
-        clip = download_clip(f"{movie} {scene} scene funniest movie")
-        out   = os.path.join(TMP_DIR, fname_safe)
+        clip = download_clip(f"{movie} {scene} scene")
+        out  = os.path.join(TMP_DIR, fname)
         transform_clip(clip, out)
-        upload_to_drive(out, fname_safe)
+        upload_to_drive(out, fname)
 
 if __name__ == "__main__":
     main()
