@@ -2,11 +2,30 @@
 import os
 import json
 import io
+import subprocess
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google.oauth2.service_account import Credentials as SACreds
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
+
+FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
+def add_caption_overlay(src, caption):
+    escaped = caption.replace("'", r"\\'")
+    dst = src.replace(".mp4", "_CAP.mp4")
+    cmd = [
+        "ffmpeg", "-y", "-i", src,
+        "-vf",
+        (
+            f"drawtext=fontfile={FONT_PATH}:text='{escaped}':"
+            "fontcolor=white:fontsize=48:box=1:boxcolor=black@0.5:"
+            "boxborderw=5:x=(w-text_w)/2:y=40"
+        ),
+        "-c:a", "copy", dst
+    ]
+    subprocess.run(cmd, check=True)
+    return dst
 
 # ── 1) YouTube: load OAuth token for Impulse from secret ────────────────
 yt_info = json.loads(os.environ['IMPULSE_YT_TOKEN'])
@@ -65,8 +84,12 @@ while True:
             base_title = base_title[:87].rstrip() + "..."
         title = f"{base_title} #shorts"
 
+        # Create captioned version
+        captioned = add_caption_overlay(name, base_title)
+        os.remove(name)
+
         # Upload as YouTube Short
-        print(f"📤 Uploading {name} as YouTube Short with title: {title}")
+        print(f"📤 Uploading {captioned} as YouTube Short with title: {title}")
         body = {
             'snippet': {
                 'title':       title,
@@ -77,7 +100,7 @@ while True:
                 'privacyStatus': 'public'
             }
         }
-        media = MediaFileUpload(name, mimetype='video/*')
+        media = MediaFileUpload(captioned, mimetype='video/*')
         youtube.videos().insert(
             part='snippet,status',
             body=body,
@@ -89,7 +112,7 @@ while True:
         drive_service.files().delete(fileId=file_id).execute()
 
         # Remove local copy
-        os.remove(name)
+        os.remove(captioned)
         print(f"✅ Completed upload and cleanup for {name}")
 
     page_token = resp.get('nextPageToken')
