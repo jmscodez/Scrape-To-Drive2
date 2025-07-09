@@ -32,4 +32,5 @@ jobs:
         REDDIT_CLIENT_SECRET:   ${{ secrets.REDDIT_CLIENT_SECRET }}
         OPENROUTER_API_KEY:     ${{ secrets.OPENROUTER_API_KEY }}
         GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
+        GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
       run: python NFL-2.py
