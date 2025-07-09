@@ -8,6 +8,7 @@ import requests
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+from sheets_client import add_video_to_sheet # <-- Import the new function
 
 # ------------------ Google Drive Integration ------------------
 SCOPES = ['https://www.googleapis.com/auth/drive']
@@ -42,7 +43,7 @@ def upload_to_drive(drive_service, folder_id, file_path):
 
 # ------------------ Utilities ------------------
 def sanitize_filename(fn):
-    fn = re.sub(r'[\\/*?:"<>|]', "", fn)
+    fn = re.sub(r'[\\\\/*?:\\"<>|]', "", fn)
     return fn.strip()[:100]
 
 def get_video_resolution(path):
@@ -157,16 +158,16 @@ def generate_headline(post_title):
         prompt = (
             "Your job is to take captions that I give you and turn them into a headline that would be used on a TikTok video. "
             "I will give you the input at the end, your output should ONLY be the new title. "
-            "There should be nothing else besides the caption as your output. Here are some rules to follow:\n"
-            "1. It should be the text at the top or bottom of the video that explains what's happening in the video.\n"
-            "2. It should be tailored for TikTok SEO.\n"
-            "3. Remove any '_VERTICAL.mp4' text if present.\n"
-            "4. Use a max of 2 emojis.\n"
-            "5. NO HASHTAGS.\n"
-            "6. If a name is included, keep the name in the caption.\n\n"
-            "Here is an example input and output:\n\n"
-            "Input: '[Highlight] Cam Ward throws a dime at Miami Pro Day_VERTICAL'\n"
-            "Output: 'Cam Ward Drops a DIME at Miami Pro Day 🏈🔥'\n\n"
+            "There should be nothing else besides the caption as your output. Here are some rules to follow:\\n"
+            "1. It should be the text at the top or bottom of the video that explains what's happening in the video.\\n"
+            "2. It should be tailored for TikTok SEO.\\n"
+            "3. Remove any '_VERTICAL.mp4' text if present.\\n"
+            "4. Use a max of 2 emojis.\\n"
+            "5. NO HASHTAGS.\\n"
+            "6. If a name is included, keep the name in the caption.\\n\\n"
+            "Here is an example input and output:\\n\\n"
+            "Input: '[Highlight] Cam Ward throws a dime at Miami Pro Day_VERTICAL'\\n"
+            "Output: 'Cam Ward Drops a DIME at Miami Pro Day 🏈🔥'\\n\\n"
             f"Now create a TikTok caption for this content: '{truncated_title}'"
         )
         
@@ -192,8 +193,8 @@ def generate_headline(post_title):
         
         # Extract and clean the response
         caption = response.json()['choices'][0]['message']['content'].strip()
-        caption = re.sub(r'_VERTICAL\.mp4', '', caption)  # Remove any remaining _VERTICAL.mp4
-        caption = re.sub(r'#\w+', '', caption)  # Remove any hashtags
+        caption = re.sub(r'_VERTICAL\\.mp4', '', caption)  # Remove any remaining _VERTICAL.mp4
+        caption = re.sub(r'#\\w+', '', caption)  # Remove any hashtags
         return caption[:150]  # Ensure we don't return overly long captions
         
     except Exception as e:
@@ -230,6 +231,18 @@ if __name__ == "__main__":
         final = f"{headline}.mp4"
         os.rename(vert, final)
         upload_to_drive(drive, folder_id, final)
+
+        # --- Add data to Google Sheet ---
+        try:
+            add_video_to_sheet(
+                source="NBA",
+                reddit_url=post.url,
+                reddit_caption=post.title,
+                drive_video_name=headline
+            )
+        except Exception as e:
+            print(f"⚠️ Failed to add data to Google Sheet: {e}")
+
         os.remove(final)
         processed += 1
         print(f"✅ Processed: {headline}")
