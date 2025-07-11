@@ -36,7 +36,8 @@ def fetch_scenes(prompt):
     scenes = []
     for line in text.splitlines():
         if "–" in line:
-            movie, scene = line.split("–", 1)
+            # Split from the right to robustly separate movie from scene
+            movie, scene = line.rsplit("–", 1)
             # Clean up markdown, list numbers, and other search-breaking characters
             clean_movie = re.sub(r"^\s*\d+\.\s*", "", movie).strip().replace("*", "").replace("_", "").replace(":", "")
             clean_scene = scene.strip().replace("*", "").replace("_", "").replace("[", "").replace("]", "")
@@ -53,23 +54,27 @@ def generate_creative_title(movie, scene):
         f"Scene: {scene}\n\n"
         f"Respond with ONLY the creative title."
     )
-    resp = requests.post(
-        OPENROUTER_URL,
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": "google/gemini-pro", # Using a slightly more creative model
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 60,
-            "temperature": 0.8,
-        }
-    )
-    resp.raise_for_status()
-    title = resp.json()["choices"][0]["message"]["content"].strip()
-    # Final cleanup to remove any accidental quotes
-    return title.replace('"', '').replace("'", "")
+    try:
+        resp = requests.post(
+            OPENROUTER_URL,
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "google/gemini-pro", # Using a slightly more creative model
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 60,
+                "temperature": 0.8,
+            }
+        )
+        resp.raise_for_status()
+        title = resp.json()["choices"][0]["message"]["content"].strip()
+        # Final cleanup to remove any accidental quotes
+        return title.replace('"', '').replace("'", "")
+    except requests.exceptions.HTTPError as e:
+        print(f"   ⚠️ Could not generate creative title (API Error: {e}). Falling back to movie title.")
+        return movie
 
 
 # ── Build two lists: funny and classic ──────────────────────────────────────────
