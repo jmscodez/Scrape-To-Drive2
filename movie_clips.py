@@ -36,7 +36,10 @@ def fetch_scenes(prompt):
     for line in text.splitlines():
         if "–" in line:
             movie, scene = line.split("–", 1)
-            scenes.append((movie.strip(), scene.strip()))
+            # Clean up markdown and leading/trailing whitespace
+            clean_movie = movie.strip().replace("*", "").replace("_", "")
+            clean_scene = scene.strip().replace("*", "").replace("_", "")
+            scenes.append((clean_movie, clean_scene))
     return scenes
 
 # ── Build two lists: funny and classic ──────────────────────────────────────────
@@ -84,11 +87,14 @@ def download_clip(search_term):
     with YoutubeDL(opts) as ydl:
         try:
             info = ydl.extract_info(search_term, download=True)
-            if info:
-                entry = info.get("entries", [info])[0]
+            # Handle cases where search yields no results
+            if info and info.get("entries"):
+                entry = info["entries"][0]
                 return ydl.prepare_filename(entry)
+            print("   → No search results found on YouTube.")
             return None
         except Exception as e:
+            # Catch other download errors, e.g., video unavailable
             print(f"❌ YouTube download failed: {e}")
             return None
 
