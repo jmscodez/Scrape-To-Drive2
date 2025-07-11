@@ -26,7 +26,10 @@ jobs:
         pip install -r requirements.txt yt-dlp
 
     - name: Write service account file
-      run: echo "${{ secrets.GDRIVE_SERVICE_ACCOUNT }}" > service_account.json
+      run: echo '${{ secrets.GDRIVE_SERVICE_ACCOUNT }}' > service_account.json
+    
+    - name: Display service account file for debugging
+      run: cat service_account.json
 
     - name: Run movie_clips.py
       env:
