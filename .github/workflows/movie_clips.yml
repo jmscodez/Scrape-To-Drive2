@@ -12,23 +12,24 @@ jobs:
 
     steps:
     - name: Checkout repo
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.x'
+        python-version: '3.10'
 
     - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y ffmpeg
-        pip install -r requirements.txt yt-dlp
-
-    - name: Write service account file
-      run: echo "${{ secrets.GDRIVE_SERVICE_ACCOUNT }}" > service_account.json
+        pip install -r requirements.txt
 
     - name: Run movie_clips.py
       env:
+        REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+        REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+        GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
+        GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
         OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       run: python movie_clips.py
