@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import requests
 from yt_dlp import YoutubeDL
@@ -36,9 +37,9 @@ def fetch_scenes(prompt):
     for line in text.splitlines():
         if "–" in line:
             movie, scene = line.split("–", 1)
-            # Clean up markdown and leading/trailing whitespace
-            clean_movie = movie.strip().replace("*", "").replace("_", "")
-            clean_scene = scene.strip().replace("*", "").replace("_", "")
+            # Clean up markdown, list numbers, and other search-breaking characters
+            clean_movie = re.sub(r"^\s*\d+\.\s*", "", movie).strip().replace("*", "").replace("_", "").replace(":", "")
+            clean_scene = scene.strip().replace("*", "").replace("_", "").replace("[", "").replace("]", "")
             scenes.append((clean_movie, clean_scene))
     return scenes
 
@@ -46,11 +47,12 @@ def fetch_scenes(prompt):
 def get_target_scenes():
     funny_prompt = (
         "List the single funniest movie scene of all time released in 1990 or later. "
-        "Respond as: Movie Title – [brief scene description]."
+        "Respond only as: Movie Title – Brief, descriptive scene name (under 10 words)."
     )
     classic_prompt = (
         "List the top two most iconic classic movie scenes of all time (any year). "
-        "Respond each as: Movie Title – [brief scene description]."
+        "Respond each on a new line, only as: Movie Title – Brief, descriptive scene name (under 10 words). "
+        "Do not use list numbers."
     )
     funny = fetch_scenes(funny_prompt)      # returns [(movie,scene)]
     classic = fetch_scenes(classic_prompt)  # returns [(movie,scene), …]
