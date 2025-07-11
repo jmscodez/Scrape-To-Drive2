@@ -43,6 +43,35 @@ def fetch_scenes(prompt):
             scenes.append((clean_movie, clean_scene))
     return scenes
 
+# ── Generate a creative title with OpenRouter ──────────────────────────────────
+def generate_creative_title(movie, scene):
+    prompt = (
+        f"You are a creative assistant for a social media account that posts movie clips. "
+        f"Your task is to generate a short, catchy, viral-style title for a specific movie scene. "
+        f"The title should be engaging, under 10 words, and include ONE relevant emoji at the end.\n\n"
+        f"Movie: {movie}\n"
+        f"Scene: {scene}\n\n"
+        f"Respond with ONLY the creative title."
+    )
+    resp = requests.post(
+        OPENROUTER_URL,
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": "google/gemini-pro", # Using a slightly more creative model
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 60,
+            "temperature": 0.8,
+        }
+    )
+    resp.raise_for_status()
+    title = resp.json()["choices"][0]["message"]["content"].strip()
+    # Final cleanup to remove any accidental quotes
+    return title.replace('"', '').replace("'", "")
+
+
 # ── Build two lists: funny and classic ──────────────────────────────────────────
 def get_target_scenes():
     funny_prompt = (
@@ -104,6 +133,14 @@ def download_clip(search_term):
 def transform_clip(in_p, out_p, title):
     # Escape single quotes and colons for the ffmpeg drawtext filter.
     escaped_title = title.replace("'", "'\\\\''").replace(":", "\\\\:")
+    
+    # Use a modern font available on runners and add a semi-transparent background box for readability.
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    vf_text = (
+        f"drawtext=fontfile='{font_path}':text='{escaped_title}':fontsize=60:fontcolor=white:"
+        f"x=(w-text_w)/2:y=150:shadowcolor=black@0.6:shadowx=2:shadowy=2:"
+        f"box=1:boxcolor=black@0.4:boxborderw=10"
+    )
 
     vf_base = (
         "[0:v]split[original][background];"
@@ -111,8 +148,6 @@ def transform_clip(in_p, out_p, title):
         "[original]scale=1080:-2[foreground];"
         "[blurred_background][foreground]overlay=(W-w)/2:(H-h)/2"
     )
-    
-    vf_text = f"drawtext=text='{escaped_title}':fontsize=60:fontcolor=white:x=(w-text_w)/2:y=150:shadowcolor=black:shadowx=2:shadowy=2"
     
     vf_combined = f"{vf_base},{vf_text}"
 
@@ -137,22 +172,30 @@ def upload_to_drive(local_path, name):
 def main():
     scenes = get_target_scenes()  # 1 funny + 2 classic
     for movie, scene in scenes:
-        fname = f"{movie} - {scene}.mp4".replace("/", "_")
-        print(f"→ Processing: {fname}")
-        if already_uploaded(fname):
-            print("   → Already uploaded, skipping.")
+        print(f"→ Processing scene from '{movie}': {scene}")
+
+        creative_title = generate_creative_title(movie, scene)
+        print(f"   → Creative title: '{creative_title}'")
+        
+        # Sanitize the creative title to be a valid filename
+        safe_fname = re.sub(r'[\\/*?:"<>|]', "", creative_title) + ".mp4"
+        
+        if already_uploaded(safe_fname):
+            print(f"   → Already uploaded as '{safe_fname}', skipping.")
             continue
         
         search_query = f"{movie} {scene} scene"
-        print(f"Downloading from YouTube with search: '{search_query}'")
+        print(f"   → Downloading from YouTube with search: '{search_query}'")
         clip = download_clip(search_query)
 
         if not clip:
             continue
 
-        out  = os.path.join(TMP_DIR, fname)
-        transform_clip(clip, out, movie)
-        upload_to_drive(out, fname)
+        out  = os.path.join(TMP_DIR, safe_fname)
+        transform_clip(clip, out, creative_title)
+        upload_to_drive(out, safe_fname)
+        print(f"   → Successfully processed and uploaded '{safe_fname}'")
+
 
 if __name__ == "__main__":
     main()
