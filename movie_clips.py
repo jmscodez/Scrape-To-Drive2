@@ -22,7 +22,22 @@ OPENROUTER_URL     = "https://openrouter.ai/api/v1/chat/completions"
 TMP_DIR = "temp_clips"
 os.makedirs(TMP_DIR, exist_ok=True)
 
-# [ ... The rest of the file is unchanged until the main orchestration ... ]
+
+# [ ... The rest of the file is unchanged until init_drive ... ]
+
+
+# ── Drive client init ───────────────────────────────────────────────────────────
+def init_drive():
+    """Initializes the Drive service client using credentials from env variables."""
+    creds = service_account.Credentials.from_service_account_info(
+        GDRIVE_SERVICE_ACCOUNT,
+        scopes=["https://www.googleapis.com/auth/drive"]
+    )
+    return build("drive", "v3", credentials=creds)
+
+drive_service = init_drive()
+
+# [ ... The rest of the file is unchanged ... ]
 
 # ── Main orchestration ─────────────────────────────────────────────────────────
 def main():
