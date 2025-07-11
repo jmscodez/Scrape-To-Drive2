@@ -100,16 +100,27 @@ def download_clip(search_term):
             print(f"❌ YouTube download failed: {e}")
             return None
 
-# ── Reformat video to 1080×1920 with blurred bars ───────────────────────────────
-def transform_clip(in_p, out_p):
-    vf = (
-        "scale=1080:-2,split=2[orig][bg];"
-        "[bg]scale=1080:1920,boxblur=20[bgblur];"
-        "[bgblur][orig]overlay=(W-w)/2:(H-h)/2"
+# ── Reformat video to 1080×1920 with blurred bars and title ─────────────────────
+def transform_clip(in_p, out_p, title):
+    # Escape single quotes and colons for the ffmpeg drawtext filter.
+    escaped_title = title.replace("'", "'\\\\''").replace(":", "\\\\:")
+
+    vf_base = (
+        "[0:v]split[original][background];"
+        "[background]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20[blurred_background];"
+        "[original]scale=1080:-2[foreground];"
+        "[blurred_background][foreground]overlay=(W-w)/2:(H-h)/2"
     )
+    
+    vf_text = f"drawtext=text='{escaped_title}':fontsize=60:fontcolor=white:x=(w-text_w)/2:y=150:shadowcolor=black:shadowx=2:shadowy=2"
+    
+    vf_combined = f"{vf_base},{vf_text}"
+
     subprocess.run(
-        ["ffmpeg", "-y", "-i", in_p, "-vf", vf, "-c:a", "copy", out_p],
-        check=True
+        ["ffmpeg", "-y", "-i", in_p, "-vf", vf_combined, "-c:a", "copy", out_p],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
 # ── Upload to Google Drive ────────────────────────────────────────────────────
@@ -140,7 +151,7 @@ def main():
             continue
 
         out  = os.path.join(TMP_DIR, fname)
-        transform_clip(clip, out)
+        transform_clip(clip, out, movie)
         upload_to_drive(out, fname)
 
 if __name__ == "__main__":
