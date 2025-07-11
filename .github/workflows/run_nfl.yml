@@ -2,7 +2,7 @@ name: Run NFL Video Bot
 
 on:
   schedule:
-    - cron: '33 20 * * *'  # 10:30 AM EST (14:30 UTC)
+    - cron: '00 14 * * *'  # 10:00 AM EST (14:00 UTC)
   workflow_dispatch:
 
 jobs:
