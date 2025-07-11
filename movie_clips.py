@@ -65,7 +65,9 @@ drive_service = init_drive()
 
 # ── Check duplicate in Drive ────────────────────────────────────────────────────
 def already_uploaded(name):
-    q = f"name='{name}' and '{DRIVE_FOLDER_ID}' in parents and trashed=false"
+    # Escape single quotes in the filename for the Drive API query.
+    escaped_name = name.replace("'", "\\'")
+    q = f"name='{escaped_name}' and '{DRIVE_FOLDER_ID}' in parents and trashed=false"
     res = drive_service.files().list(q=q, fields="files(id)").execute()
     return bool(res.get("files"))
 
@@ -77,11 +79,18 @@ def download_clip(search_term):
         "noplaylist": True,
         "quiet": True,
         "default_search": "ytsearch1",
+        "cookiefile": "YT_Cookies.txt",
     }
     with YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(search_term, download=True)
-        entry = info["entries"][0] if "entries" in info else info
-        return ydl.prepare_filename(entry)
+        try:
+            info = ydl.extract_info(search_term, download=True)
+            if info:
+                entry = info.get("entries", [info])[0]
+                return ydl.prepare_filename(entry)
+            return None
+        except Exception as e:
+            print(f"❌ YouTube download failed: {e}")
+            return None
 
 # ── Reformat video to 1080×1920 with blurred bars ───────────────────────────────
 def transform_clip(in_p, out_p):
@@ -114,7 +123,14 @@ def main():
         if already_uploaded(fname):
             print("   → Already uploaded, skipping.")
             continue
-        clip = download_clip(f"{movie} {scene} scene")
+        
+        search_query = f"{movie} {scene} scene"
+        print(f"Downloading from YouTube with search: '{search_query}'")
+        clip = download_clip(search_query)
+
+        if not clip:
+            continue
+
         out  = os.path.join(TMP_DIR, fname)
         transform_clip(clip, out)
         upload_to_drive(out, fname)
