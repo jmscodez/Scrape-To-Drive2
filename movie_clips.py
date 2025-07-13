@@ -51,10 +51,10 @@ def generate_creative_title(movie, scene):
     prompt = (
         f"You are a creative assistant for a social media account that posts movie clips. "
         f"Your task is to generate a short, viral-style title for a specific movie scene. "
-        f"The title should be in a 'When...' or 'POV:' format, be a maximum of 8 words, and include ONE relevant emoji from this list: 😂, 🔥, 🤯, 😭, 🍿, 🎬, ❤️.\n\n"
+        f"The title must be a single, short, all-words phrase in a 'POV:' or 'When...' format. Do NOT use any emojis at the start or in the middle—ONLY add 1 or 2 relevant emojis at the very end as context or punchline. Do NOT include the movie name or a scene description in the title.\n\n"
         f"Movie: {movie}\n"
         f"Scene: {scene}\n\n"
-        f"Respond with ONLY the creative title. Do not add a scene description."
+        f"Respond with ONLY the creative title."
     )
     try:
         resp = requests.post(
