@@ -48,8 +48,8 @@ def fetch_scenes(prompt):
 def generate_creative_title(movie, scene):
     prompt = (
         f"You are a creative assistant for a social media account that posts movie clips. "
-        f"Your task is to generate a short, catchy, viral-style title for a specific movie scene. "
-        f"The title should be engaging, under 10 words, and include ONE relevant emoji at the end.\n\n"
+        f"Your task is to generate a short, viral-style title for a specific movie scene. "
+        f"The title should be in a 'When...' or 'POV:' format, be under 12 words, and include ONE relevant emoji from this list: 😂, 🔥, 🤯, 😭, 🍿, 🎬, ❤️.\n\n"
         f"Movie: {movie}\n"
         f"Scene: {scene}\n\n"
         f"Respond with ONLY the creative title."
@@ -138,26 +138,50 @@ def download_clip(search_term):
 def transform_clip(in_p, out_p, title):
     # Escape single quotes and colons for the ffmpeg drawtext filter.
     escaped_title = title.replace("'", "'\\\\''").replace(":", "\\\\:")
-    
-    # Use a modern font available on runners and add a semi-transparent background box for readability.
     font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    vf_text = (
-        f"drawtext=fontfile='{font_path}':text='{escaped_title}':fontsize=60:fontcolor=white:"
-        f"x=(w-text_w)/2:y=150:shadowcolor=black@0.6:shadowx=2:shadowy=2:"
-        f"box=1:boxcolor=black@0.4:boxborderw=10"
-    )
+    bubble_path = "bubble.png"
 
+    # Define the audio normalization filter, which requires re-encoding.
+    af_normalize = "loudnorm=I=-16:TP=-1.5:LRA=11"
+
+    # Base video layers (blur, scale, overlay)
     vf_base = (
         "[0:v]split[original][background];"
         "[background]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20[blurred_background];"
         "[original]scale=1080:-2[foreground];"
         "[blurred_background][foreground]overlay=(W-w)/2:(H-h)/2"
     )
-    
-    vf_combined = f"{vf_base},{vf_text}"
+
+    if not os.path.exists(bubble_path):
+        # Fallback to simple text box if bubble.png doesn't exist
+        print("   → 'bubble.png' not found. Using fallback title style.")
+        vf_combined = f"{vf_base},drawtext=fontfile='{font_path}':text='{escaped_title}':fontsize=60:fontcolor=white:x=(w-text_w)/2:y=150:box=1:boxcolor=black@0.5:boxborderw=10"
+        command = [
+            "ffmpeg", "-y", "-i", in_p,
+            "-vf", vf_combined,
+            "-af", af_normalize, "-c:a", "aac",
+            out_p
+        ]
+    else:
+        # Use the bubble.png asset for a professional look
+        print("   → Found 'bubble.png'. Applying TikTok-style title.")
+        vf_complex = (
+            f"{vf_base}[base_video];"
+            # Scale the bubble to 90% of video width and position it
+            f"[1:v]scale=w=1080*0.9:-1[bubble];"
+            f"[base_video][bubble]overlay=(W-w)/2:120[video_with_bubble];"
+            # Draw the text on top of the bubble
+            f"[video_with_bubble]drawtext=fontfile='{font_path}':text='{escaped_title}':fontsize=55:fontcolor=black:x=(w-text_w)/2:y=180"
+        )
+        command = [
+            "ffmpeg", "-y", "-i", in_p, "-i", bubble_path,
+            "-filter_complex", vf_complex,
+            "-af", af_normalize, "-c:a", "aac",
+            out_p
+        ]
 
     subprocess.run(
-        ["ffmpeg", "-y", "-i", in_p, "-vf", vf_combined, "-c:a", "copy", out_p],
+        command,
         check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
