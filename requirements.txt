@@ -1,12 +1,7 @@
-praw==7.8.1
-yt-dlp
-google-api-python-client==2.104.0
-google-auth==2.23.4
-google-generativeai==0.3.2
-requests==2.31.0
-beautifulsoup4
-selenium
-scenedetect
-pydub
 gspread
 oauth2client
+praw
+yt-dlp
+requests
+google-api-python-client
+Pillow

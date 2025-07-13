@@ -6,6 +6,7 @@ from yt_dlp import YoutubeDL
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+from PIL import Image, ImageDraw, ImageFont
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -76,6 +77,44 @@ def generate_creative_title(movie, scene):
         print(f"   ⚠️ Could not generate creative title (API Error: {e}). Falling back to movie title.")
         return movie
 
+# ── Create dynamic title bubble ────────────────────────────────────────────────
+def create_dynamic_bubble(text, font_path, font_size, output_path):
+    # 1. Load font and measure text dimensions
+    font = ImageFont.truetype(font_path, font_size)
+    text_bbox = font.getbbox(text)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+
+    # 2. Define bubble properties with padding
+    padding = 30
+    bubble_width = text_width + padding * 2
+    bubble_height = text_height + padding * 2
+    corner_radius = 25
+    notch_height = 20
+    notch_width = 40
+
+    # 3. Create a new transparent image sized for the bubble and notch
+    image = Image.new("RGBA", (int(bubble_width), int(bubble_height + notch_height)), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(image)
+
+    # 4. Draw the rounded rectangle and the notch to form the bubble
+    draw.rounded_rectangle((0, 0, bubble_width, bubble_height), fill="white", radius=corner_radius)
+    notch_start_x = bubble_width - corner_radius - notch_width
+    notch_points = [
+        (notch_start_x, bubble_height - 1), # -1 to slightly overlap and avoid rendering gaps
+        (notch_start_x + notch_width, bubble_height - 1),
+        (notch_start_x + notch_width / 2, bubble_height + notch_height)
+    ]
+    draw.polygon(notch_points, fill="white")
+
+    # 5. Draw the title text onto the bubble
+    text_x = padding
+    text_y = padding - text_bbox[1] # Adjust for font's internal top padding
+    draw.text((text_x, text_y), text, font=font, fill="black")
+
+    # 6. Save the final bubble image
+    image.save(output_path)
+    return output_path
 
 # ── Build two lists: funny and classic ──────────────────────────────────────────
 def get_target_scenes():
@@ -135,13 +174,8 @@ def download_clip(search_term):
             return None
 
 # ── Reformat video to 1080×1920 with blurred bars and title ─────────────────────
-def transform_clip(in_p, out_p, title):
-    # Escape single quotes and colons for the ffmpeg drawtext filter.
-    escaped_title = title.replace("'", "'\\\\''").replace(":", "\\\\:")
-    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    bubble_path = "bubble.png"
-
-    # Define the audio normalization filter, which requires re-encoding.
+def transform_clip(in_p, out_p, bubble_path):
+    # Define the audio normalization filter for professional-sounding audio.
     af_normalize = "loudnorm=I=-16:TP=-1.5:LRA=11"
 
     # Base video layers (blur, scale, overlay)
@@ -149,37 +183,23 @@ def transform_clip(in_p, out_p, title):
         "[0:v]split[original][background];"
         "[background]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20[blurred_background];"
         "[original]scale=1080:-2[foreground];"
-        "[blurred_background][foreground]overlay=(W-w)/2:(H-h)/2"
+        "[blurred_background][foreground]overlay=(W-w)/2:(H-h)/2[base_video]"
+    )
+    
+    # Complex filter to overlay the dynamically generated bubble image.
+    vf_complex = (
+        f"{vf_base};"
+        f"[1:v]scale=w=1080*0.9:-1[bubble];" # Scale bubble to 90% of video width
+        f"[base_video][bubble]overlay=(W-w)/2:120" # Position bubble near the top
     )
 
-    if not os.path.exists(bubble_path):
-        # Fallback to simple text box if bubble.png doesn't exist
-        print("   → 'bubble.png' not found. Using fallback title style.")
-        vf_combined = f"{vf_base},drawtext=fontfile='{font_path}':text='{escaped_title}':fontsize=60:fontcolor=white:x=(w-text_w)/2:y=150:box=1:boxcolor=black@0.5:boxborderw=10"
-        command = [
-            "ffmpeg", "-y", "-i", in_p,
-            "-vf", vf_combined,
-            "-af", af_normalize, "-c:a", "aac",
-            out_p
-        ]
-    else:
-        # Use the bubble.png asset for a professional look
-        print("   → Found 'bubble.png'. Applying TikTok-style title.")
-        vf_complex = (
-            f"{vf_base}[base_video];"
-            # Scale the bubble to 90% of video width and position it
-            f"[1:v]scale=w=1080*0.9:-1[bubble];"
-            f"[base_video][bubble]overlay=(W-w)/2:120[video_with_bubble];"
-            # Draw the text on top of the bubble
-            f"[video_with_bubble]drawtext=fontfile='{font_path}':text='{escaped_title}':fontsize=55:fontcolor=black:x=(w-text_w)/2:y=180"
-        )
-        command = [
-            "ffmpeg", "-y", "-i", in_p, "-i", bubble_path,
-            "-filter_complex", vf_complex,
-            "-af", af_normalize, "-c:a", "aac",
-            out_p
-        ]
-
+    command = [
+        "ffmpeg", "-y", "-i", in_p, "-i", bubble_path,
+        "-filter_complex", vf_complex,
+        "-af", af_normalize, "-c:a", "aac", # Apply audio normalization
+        out_p
+    ]
+    
     subprocess.run(
         command,
         check=True,
@@ -200,6 +220,8 @@ def upload_to_drive(local_path, name):
 # ── Main orchestration ─────────────────────────────────────────────────────────
 def main():
     scenes = get_target_scenes()  # 1 funny + 2 classic
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
     for movie, scene in scenes:
         print(f"→ Processing scene from '{movie}': {scene}")
 
@@ -213,17 +235,37 @@ def main():
             print(f"   → Already uploaded as '{safe_fname}', skipping.")
             continue
         
+        # Create the dynamic title bubble image
+        temp_bubble_path = os.path.join(TMP_DIR, f"{safe_fname}_bubble.png")
+        try:
+            create_dynamic_bubble(creative_title, font_path, 55, temp_bubble_path)
+            print(f"   → Generated dynamic title card.")
+        except Exception as e:
+            print(f"   ❌ Failed to generate dynamic title card: {e}")
+            continue # Skip this clip if bubble generation fails
+
         search_query = f"{movie} {scene} scene"
         print(f"   → Downloading from YouTube with search: '{search_query}'")
-        clip = download_clip(search_query)
+        downloaded_clip_path = download_clip(search_query)
 
-        if not clip:
+        if not downloaded_clip_path:
+            os.remove(temp_bubble_path) # Clean up if download fails
             continue
 
-        out  = os.path.join(TMP_DIR, safe_fname)
-        transform_clip(clip, out, creative_title)
-        upload_to_drive(out, safe_fname)
-        print(f"   → Successfully processed and uploaded '{safe_fname}'")
+        output_video_path = os.path.join(TMP_DIR, safe_fname)
+        
+        try:
+            transform_clip(downloaded_clip_path, output_video_path, temp_bubble_path)
+            upload_to_drive(output_video_path, safe_fname)
+            print(f"   → Successfully processed and uploaded '{safe_fname}'")
+        finally:
+            # Ensure all temporary files are cleaned up
+            if os.path.exists(downloaded_clip_path):
+                os.remove(downloaded_clip_path)
+            if os.path.exists(temp_bubble_path):
+                os.remove(temp_bubble_path)
+            if os.path.exists(output_video_path):
+                os.remove(output_video_path)
 
 
 if __name__ == "__main__":
