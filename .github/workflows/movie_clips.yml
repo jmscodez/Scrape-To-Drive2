@@ -22,8 +22,8 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg
-        pip install -r requirements.txt yt-dlp
+        sudo apt-get install -y ffmpeg fonts-noto-color-emoji
+        pip install -r requirements.txt
 
     - name: Write service account file
       run: echo '${{ secrets.GDRIVE_SERVICE_ACCOUNT }}' > service_account.json

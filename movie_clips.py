@@ -2,6 +2,7 @@ import os
 import re
 import subprocess
 import requests
+import textwrap
 from yt_dlp import YoutubeDL
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -50,10 +51,10 @@ def generate_creative_title(movie, scene):
     prompt = (
         f"You are a creative assistant for a social media account that posts movie clips. "
         f"Your task is to generate a short, viral-style title for a specific movie scene. "
-        f"The title should be in a 'When...' or 'POV:' format, be under 12 words, and include ONE relevant emoji from this list: 😂, 🔥, 🤯, 😭, 🍿, 🎬, ❤️.\n\n"
+        f"The title should be in a 'When...' or 'POV:' format, be a maximum of 8 words, and include ONE relevant emoji from this list: 😂, 🔥, 🤯, 😭, 🍿, 🎬, ❤️.\n\n"
         f"Movie: {movie}\n"
         f"Scene: {scene}\n\n"
-        f"Respond with ONLY the creative title."
+        f"Respond with ONLY the creative title. Do not add a scene description."
     )
     try:
         resp = requests.post(
@@ -79,38 +80,32 @@ def generate_creative_title(movie, scene):
 
 # ── Create dynamic title bubble ────────────────────────────────────────────────
 def create_dynamic_bubble(text, font_path, font_size, output_path):
-    # 1. Load font and measure text dimensions
+    # 1. Load font and wrap text to fit a nice width
     font = ImageFont.truetype(font_path, font_size)
-    text_bbox = font.getbbox(text)
+    wrapped_text = textwrap.fill(text, width=20)
+    
+    # Create a dummy image to get a Draw object for measuring text
+    dummy_image = Image.new("RGBA", (1, 1))
+    draw = ImageDraw.Draw(dummy_image)
+
+    # 2. Measure the dimensions of the wrapped text block
+    text_bbox = draw.multiline_textbbox((0, 0), wrapped_text, font=font, spacing=10)
     text_width = text_bbox[2] - text_bbox[0]
     text_height = text_bbox[3] - text_bbox[1]
 
-    # 2. Define bubble properties with padding
-    padding = 30
+    # 3. Define bubble properties with padding
+    padding = 40
     bubble_width = text_width + padding * 2
     bubble_height = text_height + padding * 2
-    corner_radius = 25
-    notch_height = 20
-    notch_width = 40
+    corner_radius = 30
 
-    # 3. Create a new transparent image sized for the bubble and notch
-    image = Image.new("RGBA", (int(bubble_width), int(bubble_height + notch_height)), (255, 255, 255, 0))
+    # 4. Create a new transparent image and draw the rounded rectangle
+    image = Image.new("RGBA", (int(bubble_width), int(bubble_height)), (255, 255, 255, 0))
     draw = ImageDraw.Draw(image)
-
-    # 4. Draw the rounded rectangle and the notch to form the bubble
     draw.rounded_rectangle((0, 0, bubble_width, bubble_height), fill="white", radius=corner_radius)
-    notch_start_x = bubble_width - corner_radius - notch_width
-    notch_points = [
-        (notch_start_x, bubble_height - 1), # -1 to slightly overlap and avoid rendering gaps
-        (notch_start_x + notch_width, bubble_height - 1),
-        (notch_start_x + notch_width / 2, bubble_height + notch_height)
-    ]
-    draw.polygon(notch_points, fill="white")
 
-    # 5. Draw the title text onto the bubble
-    text_x = padding
-    text_y = padding - text_bbox[1] # Adjust for font's internal top padding
-    draw.text((text_x, text_y), text, font=font, fill="black")
+    # 5. Draw the wrapped text onto the bubble
+    draw.multiline_text((padding, padding), wrapped_text, font=font, fill="black", align="center", spacing=10)
 
     # 6. Save the final bubble image
     image.save(output_path)
@@ -178,11 +173,11 @@ def transform_clip(in_p, out_p, bubble_path):
     # Define the audio normalization filter for professional-sounding audio.
     af_normalize = "loudnorm=I=-16:TP=-1.5:LRA=11"
 
-    # Base video layers (blur, scale, overlay)
+    # Base video layers (blur, scale, crop for watermark removal, overlay)
     vf_base = (
         "[0:v]split[original][background];"
         "[background]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20[blurred_background];"
-        "[original]scale=1080:-2[foreground];"
+        "[original]scale=1080:-1,crop=iw:ih*0.9:0:0[foreground];" # Crop bottom 10% to remove watermarks
         "[blurred_background][foreground]overlay=(W-w)/2:(H-h)/2[base_video]"
     )
     
@@ -190,7 +185,7 @@ def transform_clip(in_p, out_p, bubble_path):
     vf_complex = (
         f"{vf_base};"
         f"[1:v]scale=w=1080*0.9:-1[bubble];" # Scale bubble to 90% of video width
-        f"[base_video][bubble]overlay=(W-w)/2:120" # Position bubble near the top
+        f"[base_video][bubble]overlay=(W-w)/2:550" # Position bubble lower down
     )
 
     command = [
@@ -220,7 +215,7 @@ def upload_to_drive(local_path, name):
 # ── Main orchestration ─────────────────────────────────────────────────────────
 def main():
     scenes = get_target_scenes()  # 1 funny + 2 classic
-    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    font_path = "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
 
     for movie, scene in scenes:
         print(f"→ Processing scene from '{movie}': {scene}")
@@ -238,7 +233,7 @@ def main():
         # Create the dynamic title bubble image
         temp_bubble_path = os.path.join(TMP_DIR, f"{safe_fname}_bubble.png")
         try:
-            create_dynamic_bubble(creative_title, font_path, 55, temp_bubble_path)
+            create_dynamic_bubble(creative_title, font_path, 75, temp_bubble_path)
             print(f"   → Generated dynamic title card.")
         except Exception as e:
             print(f"   ❌ Failed to generate dynamic title card: {e}")
