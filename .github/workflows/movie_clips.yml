@@ -1,9 +1,6 @@
 name: Movie Clips
 
 on:
-  schedule:
-    # daily at 10:00 AM Eastern = 14:00 UTC
-    - cron: '0 14 * * *'
   workflow_dispatch:
 
 jobs:

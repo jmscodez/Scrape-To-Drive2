@@ -215,7 +215,7 @@ def upload_to_drive(local_path, name):
 # ── Main orchestration ─────────────────────────────────────────────────────────
 def main():
     scenes = get_target_scenes()  # 1 funny + 2 classic
-    font_path = "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
     for movie, scene in scenes:
         print(f"→ Processing scene from '{movie}': {scene}")
