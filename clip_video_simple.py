@@ -288,4 +288,4 @@ if __name__ == "__main__":
     drive_folder = sys.argv[3]
     
     success = main(youtube_url, num_clips, drive_folder)
-    sys.exit(0 if success else 1) 
+    sys.exit(0 if success else 1) # Force refresh
