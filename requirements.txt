@@ -5,3 +5,4 @@ yt-dlp
 requests
 google-api-python-client
 Pillow
+ffmpeg-python
