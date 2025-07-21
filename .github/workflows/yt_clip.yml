@@ -55,5 +55,6 @@ jobs:
       env:
         OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
+        GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
       run: |
         python clip_video_simple.py "${{ github.event.inputs.youtube_link }}" "${{ github.event.inputs.num_clips }}" "${{ github.event.inputs.drive_folder }}" 

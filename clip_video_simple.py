@@ -7,8 +7,108 @@ import yt_dlp
 import requests
 from pathlib import Path
 
-# Import existing functions from NBA.py
-from NBA import authenticate_drive, get_or_create_folder, upload_to_drive, convert_to_tiktok, sanitize_filename
+# Import existing functions - avoiding NBA.py to prevent dependency issues
+import json
+import re
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+
+# Google Drive functions (copied from NBA.py to avoid import issues)
+SCOPES = ['https://www.googleapis.com/auth/drive']
+
+def authenticate_drive():
+    SERVICE_ACCOUNT_INFO = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT'])
+    creds = service_account.Credentials.from_service_account_info(
+        SERVICE_ACCOUNT_INFO, scopes=SCOPES
+    )
+    return build('drive', 'v3', credentials=creds)
+
+def get_or_create_folder(drive_service, folder_name):
+    q = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    res = drive_service.files().list(q=q, fields="files(id)").execute()
+    items = res.get('files', [])
+    if items:
+        return items[0]['id']
+    folder = drive_service.files().create(
+        body={'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'},
+        fields='id'
+    ).execute()
+    return folder['id']
+
+def upload_to_drive(drive_service, folder_id, file_path):
+    name = os.path.basename(file_path)
+    media = MediaFileUpload(file_path)
+    drive_service.files().create(
+        body={'name': name, 'parents': [folder_id]},
+        media_body=media
+    ).execute()
+    print(f"Uploaded {name} to Google Drive")
+
+def sanitize_filename(fn):
+    fn = re.sub(r'[\\/*?:"<>|]', "", fn)
+    return fn.strip()[:100]
+
+def get_video_resolution(path):
+    """Return (width, height) of the first video stream via ffprobe."""
+    cmd = [
+        'ffprobe','-v','error',
+        '-select_streams','v:0',
+        '-show_entries','stream=width,height',
+        '-of','csv=s=x:p=0',
+        path
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode == 0 and 'x' in proc.stdout:
+        w,h = proc.stdout.strip().split('x')
+        return int(w), int(h)
+    return None, None
+
+def convert_to_tiktok(video_path):
+    """Convert video to 9:16 vertical format (copied from NBA.py)"""
+    width, height = get_video_resolution(video_path)
+    if not width or not height:
+        print("⚠️ Could not get resolution; defaulting to simple crop")
+        method = 'simple'
+    else:
+        aspect = width/height
+        method = 'simple' if abs(aspect - 9/16) < 0.02 else 'blur'
+
+    output = video_path.replace(".mp4","_VERTICAL.mp4")
+
+    if method == 'simple':
+        cmd = [
+            'ffmpeg','-i',video_path,
+            '-vf','scale=1080:1920:force_original_aspect_ratio=increase,'
+                 'crop=1080:1920,setsar=1',
+            '-c:v','libx264','-preset','fast','-crf','23',
+            '-c:a','aac','-y', output
+        ]
+    else:
+        sq = min(width, height)
+        x_off = (width - sq)/2
+        y_off = (height - sq)/2
+        filt = (
+            f"split=2[bgsrc][fgsrc];"
+            f"[bgsrc]crop={sq}:{sq}:{x_off}:{y_off},"
+            f"scale=1080:1920,setsar=1,gblur=sigma=20[bg];"
+            f"[fgsrc]crop={sq}:{sq}:{x_off}:{y_off},"
+            f"scale=1080:1080,setsar=1[fg];"
+            f"[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto,setsar=1"
+        )
+        cmd = [
+            'ffmpeg','-i',video_path,
+            '-vf', filt,
+            '-c:v','libx264','-preset','fast','-crf','23',
+            '-c:a','aac','-y', output
+        ]
+
+    try:
+        subprocess.run(cmd, check=True)
+        return output
+    except Exception as e:
+        print(f"❌ Conversion failed ({method}): {e}")
+        return None
 
 def download_youtube_video(url):
     """Download YouTube video and return file path, title, and duration"""
