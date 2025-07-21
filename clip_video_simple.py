@@ -16,6 +16,7 @@ from googleapiclient.http import MediaFileUpload
 
 # ── CONFIGURATION ───────────────────────────────────────────────────────────
 SCOPES = ['https://www.googleapis.com/auth/drive']
+PARENT_DRIVE_FOLDER_ID = '1XduvuA7AyiuxvY9SdL5eGwBDDVbbdECa'
 
 # ── HELPER FUNCTIONS ─────────────────────────────────────────────────────────
 def sanitize_filename(fn):
@@ -31,18 +32,32 @@ def authenticate_drive():
     )
     return build('drive', 'v3', credentials=creds)
 
-def get_or_create_folder(drive_service, folder_name):
-    """Get or create Google Drive folder"""
-    q = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-    res = drive_service.files().list(q=q, fields="files(id)").execute()
+def get_or_create_subfolder(drive_service, parent_folder_id, subfolder_name):
+    """Get or create a subfolder within a specific parent folder."""
+    # Check if folder already exists
+    q = f"name='{subfolder_name}' and '{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    res = drive_service.files().list(q=q, fields="files(id)", pageSize=1).execute()
     items = res.get('files', [])
+    
     if items:
-        return items[0]['id']
+        folder_id = items[0]['id']
+        print(f"📁 Found existing subfolder '{subfolder_name}' (ID: {folder_id})")
+        return folder_id
+    
+    # If not, create it
+    print(f"📁 Creating new subfolder '{subfolder_name}'...")
+    folder_metadata = {
+        'name': subfolder_name,
+        'parents': [parent_folder_id],
+        'mimeType': 'application/vnd.google-apps.folder'
+    }
     folder = drive_service.files().create(
-        body={'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'},
+        body=folder_metadata,
         fields='id'
     ).execute()
-    return folder['id']
+    folder_id = folder.get('id')
+    print(f"✅ Created subfolder with ID: {folder_id}")
+    return folder_id
 
 def upload_to_drive(drive_service, folder_id, file_path):
     """Upload file to Google Drive folder"""
@@ -54,50 +69,8 @@ def upload_to_drive(drive_service, folder_id, file_path):
     ).execute()
     print(f"✅ Uploaded {name} to Google Drive")
 
-def generate_tiktok_title(original_title):
-    """Generate TikTok-optimized title using OpenRouter API"""
-    try:
-        prompt = (
-            "Create a short, catchy TikTok title from this YouTube video title. "
-            "Rules: Max 50 characters, use 1-2 relevant emojis, make it engaging for TikTok/Reels, "
-            "focus on the most interesting part, NO HASHTAGS. "
-            f"Original title: '{original_title}'"
-        )
-        
-        headers = {
-            "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": "google/gemma-2-9b-it",
-            "messages": [
-                {"role": "system", "content": "You are a viral TikTok content expert who creates engaging short titles."},
-                {"role": "user", "content": prompt}
-            ],
-            "max_tokens": 60,
-            "temperature": 0.8
-        }
-        
-        response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            json=payload,
-            headers=headers
-        )
-        response.raise_for_status()
-        
-        title = response.json()['choices'][0]['message']['content'].strip()
-        # Clean up title
-        title = re.sub(r'["\']', '', title)  # Remove quotes
-        title = re.sub(r'#\w+', '', title)     # Remove hashtags
-        title = title.strip()[:50]             # Limit length
-        
-        return title
-        
-    except Exception as e:
-        print(f"⚠️ Title generation failed: {e}")
-        # Fallback: clean up original title
-        clean_title = re.sub(r'[^\w\s-]', '', original_title)
-        return clean_title[:50].strip()
+# This function is no longer needed
+# def generate_tiktok_title(original_title): ...
 
 def download_youtube_video(url, work_dir, cookie_file=None):
     """Download YouTube video with robust error handling"""
@@ -275,20 +248,19 @@ def main(youtube_url, num_clips, drive_folder_name, cookie_file=None):
             print("❌ No clips were created")
             return False
         
-        # Step 4: Generate TikTok title
-        print("\n🎨 Generating TikTok title...")
-        tiktok_title = generate_tiktok_title(title)
-        print(f"📝 Generated title: {tiktok_title}")
+        # Step 4: No longer generating AI title, we will use the original title.
+        print("\n📝 Using original YouTube video title for filenames.")
         
         # Step 5: Upload to Google Drive
         print(f"\n☁️ Uploading {len(clip_files)} clips to Google Drive...")
         drive_service = authenticate_drive()
-        folder_id = get_or_create_folder(drive_service, drive_folder_name)
+        # Create a subfolder within the main "Custom Clips" folder
+        subfolder_id = get_or_create_subfolder(drive_service, PARENT_DRIVE_FOLDER_ID, drive_folder_name)
         
         uploaded_count = 0
         for i, clip_file in enumerate(clip_files, 1):
-            # Create filename: 1_TikTok Title, 2_TikTok Title, etc.
-            safe_title = sanitize_filename(tiktok_title)
+            # Use original YouTube title for the filename
+            safe_title = sanitize_filename(title)
             final_name = f"{i}_{safe_title}.mp4"
             final_path = work_dir / "clips" / final_name
             
@@ -296,13 +268,14 @@ def main(youtube_url, num_clips, drive_folder_name, cookie_file=None):
             clip_file.rename(final_path)
             
             try:
-                upload_to_drive(drive_service, folder_id, final_path)
+                # Upload to the newly created subfolder
+                upload_to_drive(drive_service, subfolder_id, final_path)
                 uploaded_count += 1
                 print(f"📤 Uploaded: {final_name}")
             except Exception as e:
                 print(f"❌ Upload failed for clip {i}: {e}")
         
-        print(f"\n🎉 Success! Uploaded {uploaded_count}/{len(clip_files)} clips to '{drive_folder_name}' folder")
+        print(f"\n🎉 Success! Uploaded {uploaded_count}/{len(clip_files)} clips to subfolder '{drive_folder_name}'")
         return True
         
     except Exception as e:
