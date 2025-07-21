@@ -128,11 +128,16 @@ def download_youtube_video(url, work_dir, cookie_file=None):
 
 def reformat_to_916(src_path, dst_path):
     """
-    Convert video to 9:16 vertical format
-    - Blurs & scales the center square to 1080×1920  
-    - Overlays the sharp 1080×1080 center crop
+    Convert video to 9:16 vertical format while preserving the original 16:9 aspect ratio.
+    - The full 16:9 video is scaled to fit the width of the 1080x1920 frame.
+    - The background is a blurred, stretched version of the source video.
     """
-    filter_complex = "[0:v]crop=min(iw\\,ih):min(iw\\,ih):(iw-min(iw\\,ih))/2:(ih-min(iw\\,ih))/2,split=2[fg_crop][bg_crop];[bg_crop]scale=1080:1920,setsar=1,gblur=sigma=20[bg];[fg_crop]scale=1080:1080,setsar=1[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[vid]"
+    filter_complex = (
+        "[0:v]split=2[bg_src][fg_src];"
+        "[bg_src]scale=1080:1920,setsar=1,gblur=sigma=20[bg];"
+        "[fg_src]scale=1080:-1[fg];"
+        "[bg][fg]overlay=(W-w)/2:(H-h)/2[vid]"
+    )
 
     cmd = [
         "ffmpeg", "-y", "-i", str(src_path),
