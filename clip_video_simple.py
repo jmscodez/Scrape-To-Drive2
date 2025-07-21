@@ -99,18 +99,25 @@ def generate_tiktok_title(original_title):
         clean_title = re.sub(r'[^\w\s-]', '', original_title)
         return clean_title[:50].strip()
 
-def download_youtube_video(url, work_dir):
+def download_youtube_video(url, work_dir, cookie_file=None):
     """Download YouTube video with robust error handling"""
     work_dir.mkdir(parents=True, exist_ok=True)
     dest = work_dir / "input.mp4"
     
-    # Basic download options (GitHub Actions doesn't have cookie files)
+    # Basic download options
     opts = {
         'format': 'bestvideo[height>=480]+bestaudio/best',
         'merge_output_format': 'mp4',
         'outtmpl': str(dest),
         'quiet': True,
     }
+    
+    # Use cookies if provided
+    if cookie_file and Path(cookie_file).exists():
+        print(f"🍪 Using cookies from {cookie_file}")
+        opts['cookiefile'] = cookie_file
+    elif cookie_file:
+        print(f"⚠️ Cookie file not found at '{cookie_file}'. Proceeding without cookies.")
     
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -230,7 +237,7 @@ def create_clips(video_path, duration, num_clips, work_dir):
     
     return clip_files
 
-def main(youtube_url, num_clips, drive_folder_name):
+def main(youtube_url, num_clips, drive_folder_name, cookie_file=None):
     """Main processing function"""
     print(f"🎬 Starting YouTube video clipper...")
     print(f"📹 URL: {youtube_url}")
@@ -246,7 +253,7 @@ def main(youtube_url, num_clips, drive_folder_name):
     try:
         # Step 1: Download video
         print("\n🔽 Downloading video...")
-        video_path, title, duration = download_youtube_video(youtube_url, work_dir)
+        video_path, title, duration = download_youtube_video(youtube_url, work_dir, cookie_file)
         if not video_path:
             return False
         
@@ -309,16 +316,17 @@ def main(youtube_url, num_clips, drive_folder_name):
             shutil.rmtree(work_dir)
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        print("Usage: python clip_video_simple.py <youtube_url> <num_clips> <drive_folder>")
+    if len(sys.argv) not in [4, 5]:
+        print("Usage: python clip_video_simple.py <youtube_url> <num_clips> <drive_folder> [cookie_file]")
         print("\nExample:")
-        print("python clip_video_simple.py 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' 4 'My Clips'")
+        print("python clip_video_simple.py 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' 4 'My Clips' 'cookies.txt'")
         sys.exit(1)
     
     youtube_url = sys.argv[1]
     num_clips = int(sys.argv[2])
     drive_folder = sys.argv[3]
-    
+    cookie_file = sys.argv[4] if len(sys.argv) == 5 else None
+
     # Validate inputs
     if num_clips < 1 or num_clips > 20:
         print("❌ Number of clips must be between 1 and 20")
@@ -328,5 +336,5 @@ if __name__ == "__main__":
         print("❌ Please provide a valid YouTube URL")
         sys.exit(1)
     
-    success = main(youtube_url, num_clips, drive_folder)
+    success = main(youtube_url, num_clips, drive_folder, cookie_file)
     sys.exit(0 if success else 1)
