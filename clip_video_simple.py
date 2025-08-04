@@ -126,18 +126,35 @@ def download_youtube_video(url, work_dir, cookie_file=None):
         print(f"❌ Download failed: {e}")
         return None, None, 0
 
-def reformat_to_916(src_path, dst_path):
+def reformat_to_916(src_path, dst_path, crop_style='16:9'):
     """
-    Convert video to 9:16 vertical format while preserving the original 16:9 aspect ratio.
-    - The full 16:9 video is scaled to fit the width of the 1080x1920 frame.
-    - The background is a blurred, stretched version of the source video.
+    Convert video to 9:16 vertical format with selectable crop style.
+    crop_style: '16:9', 'square_centered', or 'square_follow'
     """
-    filter_complex = (
-        "[0:v]split=2[bg_src][fg_src];"
-        "[bg_src]scale=1080:1920,setsar=1,gblur=sigma=20[bg];"
-        "[fg_src]scale=1080:-1[fg];"
-        "[bg][fg]overlay=(W-w)/2:(H-h)/2[vid]"
-    )
+    if crop_style == '16:9':
+        filter_complex = (
+            "[0:v]split=2[bg_src][fg_src];"
+            "[bg_src]scale=1080:1920,setsar=1,gblur=sigma=20[bg];"
+            "[fg_src]scale=1080:-1[fg];"
+            "[bg][fg]overlay=(W-w)/2:(H-h)/2[vid]"
+        )
+    elif crop_style == 'square_centered':
+        filter_complex = (
+            "[0:v]split=2[bg_src][fg_src];"
+            "[bg_src]scale=1080:1920,setsar=1,gblur=sigma=20[bg];"
+            "[fg_src]crop=min(iw\,ih):min(iw\,ih):(iw-min(iw\,ih))/2:(ih-min(iw\,ih))/2,scale=1080:1080,setsar=1[fg];"
+            "[bg][fg]overlay=(W-w)/2:(H-h)/2[vid]"
+        )
+    elif crop_style == 'square_follow':
+        # For now, use center crop as a fallback; can add motion/face tracking later
+        filter_complex = (
+            "[0:v]split=2[bg_src][fg_src];"
+            "[bg_src]scale=1080:1920,setsar=1,gblur=sigma=20[bg];"
+            "[fg_src]crop=min(iw\,ih):min(iw\,ih):(iw-min(iw\,ih))/2:(ih-min(iw\,ih))/2,scale=1080:1080,setsar=1[fg];"
+            "[bg][fg]overlay=(W-w)/2:(H-h)/2[vid]"
+        )
+    else:
+        raise ValueError(f"Unknown crop_style: {crop_style}")
 
     cmd = [
         "ffmpeg", "-y", "-i", str(src_path),
@@ -158,7 +175,7 @@ def reformat_to_916(src_path, dst_path):
     
     try:
         subprocess.run(cmd, check=True, capture_output=True)
-        print(f"✅ Converted to 9:16 format")
+        print(f"✅ Converted to 9:16 format ({crop_style})")
         return dst_path
     except subprocess.CalledProcessError as e:
         print(f"❌ Format conversion failed: {e}")
@@ -215,12 +232,13 @@ def create_clips(video_path, duration, num_clips, work_dir):
     
     return clip_files
 
-def main(youtube_url, num_clips, drive_folder_name, cookie_file=None):
+def main(youtube_url, num_clips, drive_folder_name, cookie_file=None, crop_style='16:9'):
     """Main processing function"""
     print(f"🎬 Starting YouTube video clipper...")
     print(f"📹 URL: {youtube_url}")
     print(f"✂️ Clips: {num_clips}")
     print(f"📁 Drive folder: {drive_folder_name}")
+    print(f"🎞️ Crop style: {crop_style}")
     
     # Setup workspace
     work_dir = Path("temp")
@@ -238,9 +256,9 @@ def main(youtube_url, num_clips, drive_folder_name, cookie_file=None):
         print(f"📊 Video duration: {duration:.1f}s ({duration/60:.1f} minutes)")
         
         # Step 2: Convert to vertical format
-        print("\n🔄 Converting to 9:16 vertical format...")
+        print(f"\n🔄 Converting to 9:16 vertical format ({crop_style})...")
         vertical_path = work_dir / "vertical.mp4"
-        converted_video = reformat_to_916(video_path, vertical_path)
+        converted_video = reformat_to_916(video_path, vertical_path, crop_style)
         if not converted_video:
             print("❌ Failed to convert to vertical format")
             return False
@@ -294,16 +312,17 @@ def main(youtube_url, num_clips, drive_folder_name, cookie_file=None):
             shutil.rmtree(work_dir)
 
 if __name__ == "__main__":
-    if len(sys.argv) not in [4, 5]:
-        print("Usage: python clip_video_simple.py <youtube_url> <num_clips> <drive_folder> [cookie_file]")
+    if len(sys.argv) not in [4, 5, 6]:
+        print("Usage: python clip_video_simple.py <youtube_url> <num_clips> <drive_folder> [cookie_file] [crop_style]")
         print("\nExample:")
-        print("python clip_video_simple.py 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' 4 'My Clips' 'cookies.txt'")
+        print("python clip_video_simple.py 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' 4 'My Clips' 'cookies.txt' '16:9'")
         sys.exit(1)
     
     youtube_url = sys.argv[1]
     num_clips = int(sys.argv[2])
     drive_folder = sys.argv[3]
-    cookie_file = sys.argv[4] if len(sys.argv) == 5 else None
+    cookie_file = sys.argv[4] if len(sys.argv) >= 5 else None
+    crop_style = sys.argv[5] if len(sys.argv) == 6 else '16:9'
 
     # Validate inputs
     if num_clips < 1 or num_clips > 20:
@@ -314,5 +333,6 @@ if __name__ == "__main__":
         print("❌ Please provide a valid YouTube URL")
         sys.exit(1)
     
-    success = main(youtube_url, num_clips, drive_folder, cookie_file)
+    success = main(youtube_url, num_clips, drive_folder, cookie_file, crop_style)
     sys.exit(0 if success else 1)
+ 

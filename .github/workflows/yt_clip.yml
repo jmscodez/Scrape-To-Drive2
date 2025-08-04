@@ -30,6 +30,15 @@ on:
         required: true
         type: string
         default: 'Custom Clips'
+      crop_style:
+        description: 'Main video area in 9:16 output'
+        required: true
+        type: choice
+        options:
+          - '16:9'
+          - 'square_centered'
+          - 'square_follow'
+        default: '16:9'
 
 jobs:
   clip-video:
@@ -57,4 +66,4 @@ jobs:
         GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
         GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
       run: |
-        python clip_video_simple.py "${{ github.event.inputs.youtube_link }}" "${{ github.event.inputs.num_clips }}" "${{ github.event.inputs.drive_folder }}" "Cookies_YT_2.txt" 
+        python clip_video_simple.py "${{ github.event.inputs.youtube_link }}" "${{ github.event.inputs.num_clips }}" "${{ github.event.inputs.drive_folder }}" "Cookies_YT_2.txt" "${{ github.event.inputs.crop_style }}" 
