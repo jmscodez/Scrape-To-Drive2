@@ -129,7 +129,7 @@ def download_youtube_video(url, work_dir, cookie_file=None):
 def reformat_to_916(src_path, dst_path, crop_style='16:9'):
     """
     Convert video to 9:16 vertical format with selectable crop style.
-    crop_style: '16:9', 'square_centered', or 'square_follow'
+    crop_style: '16:9', 'square_centered', or '4:5'
     """
     if crop_style == '16:9':
         filter_complex = (
@@ -145,12 +145,12 @@ def reformat_to_916(src_path, dst_path, crop_style='16:9'):
             "[fg_src]crop=min(iw\,ih):min(iw\,ih):(iw-min(iw\,ih))/2:(ih-min(iw\,ih))/2,scale=1080:1080,setsar=1[fg];"
             "[bg][fg]overlay=(W-w)/2:(H-h)/2[vid]"
         )
-    elif crop_style == 'square_follow':
-        # For now, use center crop as a fallback; can add motion/face tracking later
+    elif crop_style == '4:5':
+        # 4:5 portrait crop: 1080x1350
         filter_complex = (
             "[0:v]split=2[bg_src][fg_src];"
             "[bg_src]scale=1080:1920,setsar=1,gblur=sigma=20[bg];"
-            "[fg_src]crop=min(iw\,ih):min(iw\,ih):(iw-min(iw\,ih))/2:(ih-min(iw\,ih))/2,scale=1080:1080,setsar=1[fg];"
+            "[fg_src]crop=1080:1350:(iw-1080)/2:(ih-1350)/2,setsar=1[fg];"
             "[bg][fg]overlay=(W-w)/2:(H-h)/2[vid]"
         )
     else:

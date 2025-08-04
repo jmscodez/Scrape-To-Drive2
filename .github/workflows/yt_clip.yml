@@ -37,7 +37,7 @@ on:
         options:
           - '16:9'
           - 'square_centered'
-          - 'square_follow'
+          - '4:5'
         default: '16:9'
 
 jobs:
