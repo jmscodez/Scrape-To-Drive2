@@ -2,6 +2,7 @@ import os
 import re
 import subprocess
 import json
+import random
 import praw
 import yt_dlp
 from google.oauth2 import service_account
@@ -98,13 +99,34 @@ def download_video(url):
         return None, 0
 
 def convert_to_tiktok(video_path):
+    """Convert to 1080x1920 with a subtle crop offset and minor pitch shift."""
     try:
         output_path = video_path.replace(".mp4", "_VERTICAL.mp4")
+
+        # Subtle crop offset (safe clamped via ffmpeg expressions)
+        offset_px = 24  # max shift in pixels
+        dx = random.randint(-offset_px, offset_px)
+        dy = random.randint(-offset_px, offset_px)
+        vf = (
+            f"scale=1080:1920:force_original_aspect_ratio=increase,"
+            f"crop=1080:1920:"
+            f"max(0,min(iw-1080,(iw-1080)/2+{dx})):"
+            f"max(0,min(ih-1920,(ih-1920)/2+{dy})),"
+            f"setsar=1"
+        )
+
+        # Very minor pitch shift without noticeable tempo change
+        pitch_factor = random.choice([0.99, 1.01])
+        atempo = 1.0 / pitch_factor
+        af = f"asetrate=48000*{pitch_factor},aresample=48000,atempo={atempo:.6f}"
+
         subprocess.run([
-            'ffmpeg', '-i', video_path,
-            '-vf', 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1',
+            'ffmpeg', '-y', '-i', video_path,
+            '-vf', vf,
             '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-            '-c:a', 'aac', '-y', output_path
+            '-af', af,
+            '-c:a', 'aac', '-b:a', '128k',
+            output_path
         ], check=True)
         return output_path
     except Exception as e:
