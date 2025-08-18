@@ -56,6 +56,28 @@ def sanitize_filename(filename):
     filename = filename[:100]  # Limit filename length
     return filename.strip()
 
+def get_video_info(video_path):
+    """Get video dimensions and other properties using ffprobe"""
+    try:
+        result = subprocess.run([
+            'ffprobe', '-v', 'quiet', '-print_format', 'json',
+            '-show_streams', '-select_streams', 'v:0', video_path
+        ], capture_output=True, text=True, check=True)
+        
+        import json
+        data = json.loads(result.stdout)
+        if data['streams']:
+            stream = data['streams'][0]
+            return {
+                'width': int(stream.get('width', 0)),
+                'height': int(stream.get('height', 0)),
+                'duration': float(stream.get('duration', 0)),
+                'codec': stream.get('codec_name', 'unknown')
+            }
+    except Exception as e:
+        print(f"Error getting video info: {e}")
+    return None
+
 def download_video(url):
     try:
         ydl_opts = {
@@ -81,6 +103,11 @@ def download_video(url):
             info = ydl.extract_info(url, download=True)
             downloaded_file = ydl.prepare_filename(info)
             
+            # Get video info for debugging
+            video_info = get_video_info(downloaded_file)
+            if video_info:
+                print(f"Video info: {video_info['width']}x{video_info['height']}, duration: {video_info['duration']}s")
+            
             # Verify the file has audio
             result = subprocess.run(
                 ['ffprobe', '-loglevel', 'error', '-select_streams', 'a',
@@ -103,31 +130,74 @@ def convert_to_tiktok(video_path):
     try:
         output_path = video_path.replace(".mp4", "_VERTICAL.mp4")
 
-        # Subtle crop offset (safe clamped via ffmpeg expressions)
-        offset_px = 24  # max shift in pixels
-        dx = random.randint(-offset_px, offset_px)
-        dy = random.randint(-offset_px, offset_px)
-        vf = (
-            f"scale=1080:1920:force_original_aspect_ratio=increase,"
-            f"crop=1080:1920:"
-            f"max(0,min(iw-1080,(iw-1080)/2+{dx})):"
-            f"max(0,min(ih-1920,(ih-1920)/2+{dy})),"
-            f"setsar=1"
-        )
+        # Get video info to determine the best approach
+        video_info = get_video_info(video_path)
+        if video_info:
+            print(f"Converting video: {video_info['width']}x{video_info['height']}")
+            
+            # If video is already close to 9:16 aspect ratio, use simple scaling
+            aspect_ratio = video_info['width'] / video_info['height']
+            if 0.5 <= aspect_ratio <= 0.6:  # Close to 9:16 (0.5625)
+                print("Video is already close to 9:16, using simple scaling")
+                vf = "scale=1080:1920:force_original_aspect_ratio=increase,setsar=1"
+            else:
+                # Use crop for other aspect ratios
+                print("Using crop to achieve 9:16 aspect ratio")
+                vf = (
+                    "scale=1080:1920:force_original_aspect_ratio=increase,"
+                    "crop=1080:1920:(iw-1080)/2:(ih-1920)/2,"
+                    "setsar=1"
+                )
+        else:
+            # Fallback to simple scaling if we can't get video info
+            print("Could not get video info, using simple scaling")
+            vf = "scale=1080:1920:force_original_aspect_ratio=increase,setsar=1"
 
         # Very minor pitch shift without noticeable tempo change
         pitch_factor = random.choice([0.99, 1.01])
         atempo = 1.0 / pitch_factor
         af = f"asetrate=48000*{pitch_factor},aresample=48000,atempo={atempo:.6f}"
 
-        subprocess.run([
+        # Add error handling and verbose output for debugging
+        cmd = [
             'ffmpeg', '-y', '-i', video_path,
             '-vf', vf,
             '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
             '-af', af,
             '-c:a', 'aac', '-b:a', '128k',
             output_path
-        ], check=True)
+        ]
+        
+        print(f"Running ffmpeg command: {' '.join(cmd)}")
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            print(f"FFmpeg stderr: {result.stderr}")
+            print(f"FFmpeg stdout: {result.stdout}")
+            
+            # Try fallback approach without crop if the first attempt fails
+            print("Trying fallback approach without crop...")
+            vf_fallback = "scale=1080:1920:force_original_aspect_ratio=increase,setsar=1"
+            
+            cmd_fallback = [
+                'ffmpeg', '-y', '-i', video_path,
+                '-vf', vf_fallback,
+                '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                '-af', af,
+                '-c:a', 'aac', '-b:a', '128k',
+                output_path
+            ]
+            
+            print(f"Running fallback ffmpeg command: {' '.join(cmd_fallback)}")
+            
+            result_fallback = subprocess.run(cmd_fallback, capture_output=True, text=True)
+            
+            if result_fallback.returncode != 0:
+                print(f"Fallback FFmpeg stderr: {result_fallback.stderr}")
+                print(f"Fallback FFmpeg stdout: {result_fallback.stdout}")
+                raise subprocess.CalledProcessError(result_fallback.returncode, cmd_fallback, result_fallback.stdout, result_fallback.stderr)
+            
         return output_path
     except Exception as e:
         print(f"❌ Conversion failed: {str(e)}")
@@ -167,13 +237,19 @@ if __name__ == "__main__":
             if not video_path:
                 continue
                 
+            # Check if file exists and is valid
+            if not os.path.exists(video_path):
+                print(f"⚠️ Skipping: Downloaded file not found - {video_path}")
+                continue
+                
             if not (10 <= duration <= 180):
                 print(f"⚠️ Skipping: Duration {duration}s out of range")
                 os.remove(video_path)
                 continue
             
             vertical_path = convert_to_tiktok(video_path)
-            os.remove(video_path)  # Clean up original video
+            if video_path and os.path.exists(video_path):
+                os.remove(video_path)  # Clean up original video
             
             if vertical_path:
                 sanitized_title = sanitize_filename(post.title)
