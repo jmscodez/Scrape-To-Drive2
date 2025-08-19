@@ -175,7 +175,7 @@ def generate_headline(post_title):
                 "role": "user",
                 "content": prompt
             }],
-            "max_tokens": 80,  # Allow slightly longer for safety
+            "max_tokens": 500,  # Allow slightly longer for safety
             "temperature": 0.85
         }
         response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
