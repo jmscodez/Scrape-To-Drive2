@@ -149,12 +149,13 @@ def generate_headline(post_title):
     try:
         truncated_title = post_title[:200]
         prompt = (
-            "Rewrite the following Reddit NBA highlight as a catchy, viral TikTok caption.\n"
+            "Rewrite the following Reddit NBA highlight as a short, catchy, viral TikTok caption.\n"
             "Rules:\n"
             "- Use at most 2 relevant emojis.\n"
             "- No hashtags anywhere.\n"
+            "- Keep the caption under 200 characters and never more than one line.\n"
             "- Make the caption short, natural, and exciting—summarize the moment.\n"
-            "- Output ONLY the TikTok caption, and nothing else (no intro, formatting, or extra explanation).\n\n"
+            "- Output ONLY the TikTok caption, and nothing else (no intro, formatting, or explanation).\n\n"
             f"Reddit title:\n{truncated_title}\n\n"
             "TikTok caption:"
         )
@@ -163,30 +164,30 @@ def generate_headline(post_title):
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "meta-llama/llama-3.3-70b-instruct",
+            "model": "meta-llama/llama-3.3-70b-instruct:free",
             "messages": [{
                 "role": "system",
                 "content": (
                     "You are a social media expert specializing in creating viral, concise TikTok captions from NBA highlight titles. "
-                    "Your output MUST be a single line: the final caption and nothing else."
+                    "Always obey all instructions precisely and never go over 200 characters."
                 )
             }, {
                 "role": "user",
                 "content": prompt
             }],
-            "max_tokens": 60,  # 60 is enough for a short TikTok caption
-            "temperature": 0.85  # A bit higher for more creativity
+            "max_tokens": 80,  # Allow slightly longer for safety
+            "temperature": 0.85
         }
         response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
         response.raise_for_status()
-        # Get only the first non-empty line and strip unwanted remnants
         content = response.json()['choices'][0]['message']['content'].strip()
-        # Remove ANYthing before/after the first real line, in case the LLM puts instructions or blank lines
+        # Only take first line and trim
         caption = content.split('\n').replace('_VERTICAL.mp4', '')
-        # Final cleanup for hashtags, HTML, trailing punctuation
         caption = re.sub(r'#\w+', '', caption)
         caption = caption.strip()
-        return caption[:150]
+        if len(caption) > 200:
+            caption = caption[:197] + "..."
+        return caption
     except Exception as e:
         print(f"⚠️ Headline generation failed: {str(e)}")
         return sanitize_filename(post_title)[:100]
