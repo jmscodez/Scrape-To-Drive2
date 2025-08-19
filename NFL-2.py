@@ -143,42 +143,47 @@ def generate_headline(post_title):
     try:
         truncated_title = post_title[:200]
         prompt = (
-            "Your job is to take captions that I give you and turn them into a headline that would be used on a TikTok video. "
-            "I will give you the input at the end, your output should ONLY be the new title. "
-            "There should be nothing else besides the caption as your output. Here are some rules to follow:\\n"
-            "1. It should be the text at the top or bottom of the video that explains what's happening in the video.\\n"
-            "2. It should be tailored for TikTok SEO.\\n"
-            "3. Remove any '_VERTICAL.mp4' text if present.\\n"
-            "4. Use a max of 2 emojis.\\n"
-            "5. NO HASHTAGS.\\n"
-            "6. If a name is included, keep the name in the caption.\\n\\n"
-            "Here is an example input and output:\\n\\n"
-            "Input: '[Highlight] Player X makes an incredible catch_VERTICAL'\\n"
-            "Output: 'Player X Makes an Epic Catch 🏈🔥'\\n\\n"
-            f"Now create a TikTok caption for this content: '{truncated_title}'"
+            "Rewrite the following Reddit NFL highlight as a short, catchy, viral TikTok caption.\n"
+            "Rules:\n"
+            "- Use at most 2 relevant emojis.\n"
+            "- No hashtags anywhere.\n"
+            "- Keep the caption under 200 characters.\n"
+            "- Make the caption short, natural, and exciting—summarize the moment.\n"
+            "- Output ONLY the TikTok caption, and nothing else (no intro, formatting, or explanation).\n\n"
+            f"Reddit title:\n{truncated_title}\n\n"
+            "TikTok caption:"
         )
         headers = {
             "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "google/gemini-2.0-flash-lite-001",
-            "messages": [
-                {"role":"system","content":"You are a social media expert who creates viral TikTok captions for NFL content."},
-                {"role":"user","content":prompt}
-            ],
-            "max_tokens":100,
-            "temperature":0.7
+            "model": "meta-llama/llama-3.3-70b-instruct:free",
+            "messages": [{
+                "role": "system",
+                "content": (
+                    "You are a social media expert specializing in creating viral, concise TikTok captions from NFL highlight titles. "
+                    "Always obey all instructions precisely and never go over 200 characters."
+                )
+            }, {
+                "role": "user",
+                "content": prompt
+            }],
+            "max_tokens": 500,  # Allow slightly longer for safety
+            "temperature": 0.85
         }
-        res = requests.post("https://openrouter.ai/api/v1/chat/completions",
-                            json=payload, headers=headers)
-        res.raise_for_status()
-        caption = res.json()['choices'][0]['message']['content'].strip()
-        caption = re.sub(r'_VERTICAL\\.mp4','', caption)
-        caption = re.sub(r'#\\w+','', caption)
-        return caption[:150]
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
+        response.raise_for_status()
+        content = response.json()['choices'][0]['message']['content'].strip()
+        # Only take first line and trim
+        caption = content.split('\n').replace('_VERTICAL.mp4', '')
+        caption = re.sub(r'#\w+', '', caption)
+        caption = caption.strip()
+        if len(caption) > 200:
+            caption = caption[:197] + "..."
+        return caption
     except Exception as e:
-        print(f"⚠️ Headline failed: {e}")
+        print(f"⚠️ Headline generation failed: {str(e)}")
         return sanitize_filename(post_title)[:100]
 
 
