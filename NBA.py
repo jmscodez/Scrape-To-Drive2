@@ -41,13 +41,13 @@ def upload_to_drive(drive_service, folder_id, file_path):
     ).execute()
     print(f"Uploaded {name} to Google Drive")
 
-# ------------------ Utilities ------------------
+
+# ------------------ Utils ------------------
 def sanitize_filename(fn):
     fn = re.sub(r'[\\\\/*?:\\"<>|]', "", fn)
     return fn.strip()[:100]
 
 def get_video_resolution(path):
-    """Return (width, height) of the first video stream via ffprobe."""
     cmd = [
         'ffprobe','-v','error',
         '-select_streams','v:0',
@@ -57,11 +57,12 @@ def get_video_resolution(path):
     ]
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proc.returncode == 0 and 'x' in proc.stdout:
-        w,h = proc.stdout.strip().split('x')
+        w, h = proc.stdout.strip().split('x')
         return int(w), int(h)
     return None, None
 
-# ------------------ Video Download & Processing ------------------
+
+# ------------------ Download & Convert ------------------
 VIDEO_DOMAINS = {
     'reddit.com','v.redd.it','youtube.com','youtu.be',
     'streamable.com','gfycat.com','imgur.com','tiktok.com',
@@ -75,8 +76,10 @@ def download_video(url):
         'format': 'bestvideo[height<=1080]+bestaudio/best',
         'merge_output_format': 'mp4',
         'quiet': True,
+        'cookiefile': 'cookies.txt',
+        'force_ipv4': True,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
             'Referer': 'https://www.reddit.com/'
         },
         'extractor_args': {'reddit': {'skip_auth': True}}
@@ -86,49 +89,33 @@ def download_video(url):
             info = ydl.extract_info(url, download=True)
             fn = ydl.prepare_filename(info)
             # verify audio
-            result = subprocess.run(
+            res = subprocess.run(
                 ['ffprobe','-v','error','-select_streams','a',
                  '-show_entries','stream=codec_type','-of','csv=p=0', fn],
                 stdout=subprocess.PIPE, text=True
             )
-            if 'audio' not in result.stdout:
+            if 'audio' not in res.stdout:
                 os.remove(fn)
-                return None,0
-            return fn, info.get('duration',0)
+                return None, 0
+            return fn, info.get('duration', 0)
     except Exception as e:
         print(f"❌ Download failed for {url}: {e}")
-        return None,0
+        return None, 0
 
 def convert_to_tiktok(video_path):
-    """
-    If aspect ratio ≈9:16: scale & crop.
-    Else: crop centered square, blur it to 1080x1920, overlay square.
-    """
-    width, height = get_video_resolution(video_path)
-    if not width or not height:
-        print("⚠️ Could not get resolution; defaulting to simple crop")
-        method = 'simple'
-    else:
-        aspect = width/height
-        method = 'simple' if abs(aspect - 9/16) < 0.02 else 'blur'
-
-    output = video_path.replace(".mp4","_VERTICAL.mp4")
-
-    if method == 'simple':
-        # simple scale+crop to 1080x1920
+    w, h = get_video_resolution(video_path)
+    if not w or not h or abs(w/h - 9/16) < 0.02:
         cmd = [
             'ffmpeg','-i',video_path,
             '-vf','scale=1080:1920:force_original_aspect_ratio=increase,'
                  'crop=1080:1920,setsar=1',
             '-c:v','libx264','-preset','fast','-crf','23',
-            '-c:a','aac','-y', output
+            '-c:a','aac','-y', video_path.replace(".mp4","_VERTICAL.mp4")
         ]
     else:
-        # square size = min(width,height)
-        sq = min(width, height)
-        x_off = (width - sq)/2
-        y_off = (height - sq)/2
-        # filter: split into two streams, one blurred background, one FG square
+        sq = min(w, h)
+        x_off = (w - sq) / 2
+        y_off = (h - sq) / 2
         filt = (
             f"split=2[bgsrc][fgsrc];"
             f"[bgsrc]crop={sq}:{sq}:{x_off}:{y_off},"
@@ -141,19 +128,19 @@ def convert_to_tiktok(video_path):
             'ffmpeg','-i',video_path,
             '-vf', filt,
             '-c:v','libx264','-preset','fast','-crf','23',
-            '-c:a','aac','-y', output
+            '-c:a','aac','-y', video_path.replace(".mp4","_VERTICAL.mp4")
         ]
-
     try:
         subprocess.run(cmd, check=True)
-        return output
+        return video_path.replace(".mp4","_VERTICAL.mp4")
     except Exception as e:
-        print(f"❌ Conversion failed ({method}): {e}")
+        print(f"❌ Conversion failed: {e}")
         return None
-# ------------------ OpenRouter API ------------------
+
+
+# ------------------ Headline Generation ------------------
 def generate_headline(post_title):
     try:
-        # Truncate the title to avoid hitting token limits
         truncated_title = post_title[:200]
         prompt = (
             "Your job is to take captions that I give you and turn them into a headline that would be used on a TikTok video. "
@@ -166,42 +153,36 @@ def generate_headline(post_title):
             "5. NO HASHTAGS.\\n"
             "6. If a name is included, keep the name in the caption.\\n\\n"
             "Here is an example input and output:\\n\\n"
-            "Input: '[Highlight] Cam Ward throws a dime at Miami Pro Day_VERTICAL'\\n"
-            "Output: 'Cam Ward Drops a DIME at Miami Pro Day 🏈🔥'\\n\\n"
+            "Input: '[Highlight] Player X makes an incredible catch_VERTICAL'\\n"
+            "Output: 'Player X Makes an Epic Catch 🏈🔥'\\n\\n"
             f"Now create a TikTok caption for this content: '{truncated_title}'"
         )
-        
         headers = {
             "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "google/gemma-2-9b-it",
-            "messages": [{
-                "role": "system", 
-                "content": "You are a social media expert who creates viral TikTok captions for NBA content."
-            }, {
-                "role": "user", 
-                "content": prompt
-            }],
-            "max_tokens": 100,
-            "temperature": 0.7
+            "model": "google/gemini-2.0-flash-lite-001",
+            "messages": [
+                {"role":"system","content":"You are a social media expert who creates viral TikTok captions for NBA content."},
+                {"role":"user","content":prompt}
+            ],
+            "max_tokens":100,
+            "temperature":0.7
         }
-        
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
-        response.raise_for_status()
-        
-        # Extract and clean the response
-        caption = response.json()['choices'][0]['message']['content'].strip()
-        caption = re.sub(r'_VERTICAL\\.mp4', '', caption)  # Remove any remaining _VERTICAL.mp4
-        caption = re.sub(r'#\\w+', '', caption)  # Remove any hashtags
-        return caption[:150]  # Ensure we don't return overly long captions
-        
+        res = requests.post("https://openrouter.ai/api/v1/chat/completions",
+                            json=payload, headers=headers)
+        res.raise_for_status()
+        caption = res.json()['choices'][0]['message']['content'].strip()
+        caption = re.sub(r'_VERTICAL\\.mp4','', caption)
+        caption = re.sub(r'#\\w+','', caption)
+        return caption[:150]
     except Exception as e:
-        print(f"⚠️ Headline generation failed: {str(e)}")
-        return sanitize_filename(post_title)[:100]  # Fallback to sanitized title
+        print(f"⚠️ Headline failed: {e}")
+        return sanitize_filename(post_title)[:100]
 
-# ------------------ Main Process ------------------
+
+# ------------------ Main ------------------
 reddit = praw.Reddit(
     client_id=os.environ['REDDIT_CLIENT_ID'],
     client_secret=os.environ['REDDIT_CLIENT_SECRET'],
@@ -212,26 +193,54 @@ if __name__ == "__main__":
     drive = authenticate_drive()
     folder_id = get_or_create_folder(drive, "Impulse")
     processed = 0
-    for post in reddit.subreddit("NBA").top(time_filter="day", limit=50):
-        if processed >= 3:
+    target = 3
+    
+    print("Starting NBA video processing...")
+    print(f"Searching for {target} videos in /r/NBA, checking up to 150 posts.")
+
+    # Increased limit from 50 to 150 for more resilience
+    for i, post in enumerate(reddit.subreddit("NBA").top(time_filter="day", limit=150)):
+        if processed >= target:
+            print(f"Target of {target} videos reached. Exiting.")
             break
+            
+        print(f"\\n--- Checking post {i+1}: '{post.title}' ---")
+        
+        # Detailed check for video domain
         if not any(d in post.url for d in VIDEO_DOMAINS):
+            print(f"-> Skipping: URL '{post.url}' is not a recognized video domain.")
             continue
 
+        # Detailed check for download and duration
         path, dur = download_video(post.url)
-        if not path or not (10 <= dur <= 180):
+        if not path:
+            print(f"-> Skipping: Video download failed for URL: {post.url}")
             continue
+            
+        if not (10 <= dur <= 180):
+            print(f"-> Skipping: Video duration ({dur}s) is outside the 10-180s range.")
+            if os.path.exists(path):  # Clean up downloaded file
+                os.remove(path)
+            continue
+
+        print(f"  \\_ Video downloaded successfully (Duration: {dur}s). Path: {path}")
 
         vert = convert_to_tiktok(path)
-        os.remove(path)
+        os.remove(path)  # Clean up original file after conversion attempt
         if not vert:
+            print(f"-> Skipping: Video conversion to vertical format failed.")
             continue
+
+        print(f"  \\_ Video converted successfully. Path: {vert}")
 
         headline = sanitize_filename(generate_headline(post.title))
         final = f"{headline}.mp4"
         os.rename(vert, final)
-        upload_to_drive(drive, folder_id, final)
+        
+        print(f"  \\_ Headline generated: '{headline}'")
 
+        upload_to_drive(drive, folder_id, final)
+        
         # --- Add data to Google Sheet ---
         try:
             add_video_to_sheet(
@@ -245,4 +254,6 @@ if __name__ == "__main__":
 
         os.remove(final)
         processed += 1
-        print(f"✅ Processed: {headline}")
+        print(f"✅ Processed and uploaded: {headline}")
+        
+    print(f"\\nFinished processing. Total videos uploaded: {processed}.")
