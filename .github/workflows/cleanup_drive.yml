@@ -1,0 +1,27 @@
+name: Cleanup Google Drive
+
+on:
+  schedule:
+    # Runs every Sunday and Thursday at 10 PM EST
+    - cron: "0 3 * * 1,4"  # 03:00 UTC = 10:00 PM EST (previous day offset handled automatically)
+  workflow_dispatch: # allow manual trigger if needed
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: Install dependencies
+        run: pip install google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
+
+      - name: Run cleanup script
+        env:
+          GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
+        run: python cleanup_drive.py
