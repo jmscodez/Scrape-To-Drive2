@@ -163,7 +163,7 @@ def generate_headline(post_title):
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "meta-llama/llama-3.2-11b-vision-instruct:free",
+            "model": "meta-llama/llama-3.3-70b-instruct",
             "messages": [{
                 "role": "system",
                 "content": (
