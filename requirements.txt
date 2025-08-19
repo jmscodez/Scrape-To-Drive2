@@ -6,3 +6,5 @@ requests
 google-api-python-client
 Pillow
 ffmpeg-python
+opencv-python
+numpy

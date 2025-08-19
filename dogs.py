@@ -5,6 +5,8 @@ import json
 import random
 import praw
 import yt_dlp
+import cv2
+import numpy as np
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -125,6 +127,154 @@ def download_video(url):
         print(f"❌ Download failed for {url}: {str(e)}")
         return None, 0
 
+def detect_tiktok_watermark(video_path):
+    """
+    Detect TikTok watermarks in video frames.
+    Returns True if TikTok watermark is detected, False otherwise.
+    """
+    try:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print("⚠️ Could not open video for watermark detection")
+            return False
+        
+        # Get video properties
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        duration = total_frames / fps if fps > 0 else 0
+        
+        # Sample frames for detection (check every 2 seconds)
+        sample_interval = max(1, int(fps * 2))
+        frames_to_check = min(5, total_frames // sample_interval)  # Check up to 5 frames
+        
+        watermark_detected = False
+        frames_checked = 0
+        
+        print(f"🔍 Checking {frames_to_check} frames for TikTok watermark...")
+        
+        for i in range(0, total_frames, sample_interval):
+            if frames_checked >= frames_to_check:
+                break
+                
+            cap.set(cv2.CAP_PROP_POS_FRAMES, i)
+            ret, frame = cap.read()
+            
+            if not ret:
+                continue
+                
+            frames_checked += 1
+            
+            # Check for TikTok watermark in this frame
+            if _check_frame_for_tiktok_watermark(frame):
+                watermark_detected = True
+                print(f"🚫 TikTok watermark detected in frame {i}")
+                break
+        
+        cap.release()
+        
+        if watermark_detected:
+            print("❌ Skipping: TikTok watermark detected")
+        else:
+            print("✅ No TikTok watermark detected")
+            
+        return watermark_detected
+        
+    except Exception as e:
+        print(f"⚠️ Error during watermark detection: {e}")
+        return False
+
+def _check_frame_for_tiktok_watermark(frame):
+    """
+    Check a single frame for TikTok watermark patterns.
+    Returns True if watermark is detected, False otherwise.
+    """
+    try:
+        height, width = frame.shape[:2]
+        
+        # Focus on bottom-left region where TikTok watermarks typically appear
+        # Check bottom 25% and left 40% of the frame
+        roi_height = int(height * 0.25)
+        roi_width = int(width * 0.4)
+        roi = frame[height - roi_height:height, 0:roi_width]
+        
+        if roi.size == 0:
+            return False
+        
+        # Convert to different color spaces for better detection
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        
+        # Method 1: Look for TikTok logo-like patterns (musical note icon)
+        # TikTok logo typically has high contrast and specific shape
+        _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Look for small, compact contours that could be the TikTok logo
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if 50 < area < 2000:  # Reasonable size for TikTok logo
+                x, y, w, h = cv2.boundingRect(contour)
+                aspect_ratio = w / h if h > 0 else 0
+                if 0.5 < aspect_ratio < 2.0:  # TikTok logo is roughly square-ish
+                    # Check if it's in the expected position (near bottom-left)
+                    if y > roi_height * 0.3:  # In bottom portion
+                        return True
+        
+        # Method 2: Look for TikTok text patterns
+        # TikTok watermarks often have white text on semi-transparent background
+        # Look for regions with high brightness and specific text patterns
+        
+        # Create mask for bright regions (potential text)
+        _, bright_mask = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
+        
+        # Look for horizontal lines of text (TikTok username format)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 1))
+        horizontal_lines = cv2.morphologyEx(bright_mask, cv2.MORPH_OPEN, kernel)
+        
+        # Count horizontal text-like regions
+        contours, _ = cv2.findContours(horizontal_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        text_like_regions = 0
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if 100 < area < 5000:  # Reasonable size for text
+                x, y, w, h = cv2.boundingRect(contour)
+                aspect_ratio = w / h if h > 0 else 0
+                if aspect_ratio > 3:  # Text is typically wide
+                    text_like_regions += 1
+        
+        # If we find multiple text-like regions, it might be a TikTok watermark
+        if text_like_regions >= 2:
+            return True
+        
+        # Method 3: Look for characteristic TikTok watermark colors
+        # TikTok watermarks often have specific color patterns
+        
+        # Look for white/light regions with semi-transparency
+        white_mask = cv2.inRange(hsv, np.array([0, 0, 200]), np.array([180, 30, 255]))
+        
+        # Check if there are significant white regions in the expected area
+        white_pixels = cv2.countNonZero(white_mask)
+        total_pixels = roi.shape[0] * roi.shape[1]
+        white_ratio = white_pixels / total_pixels if total_pixels > 0 else 0
+        
+        # If more than 15% of the ROI is white, it might be a watermark
+        if white_ratio > 0.15:
+            # Additional check: look for gradient patterns typical of TikTok watermarks
+            # TikTok watermarks often have a gradient from transparent to opaque
+            edges = cv2.Canny(gray, 50, 150)
+            edge_density = cv2.countNonZero(edges) / total_pixels if total_pixels > 0 else 0
+            
+            # High edge density in bright regions suggests text/logo
+            if edge_density > 0.05:
+                return True
+        
+        return False
+        
+    except Exception as e:
+        print(f"⚠️ Error in frame watermark detection: {e}")
+        return False
+
 def convert_to_tiktok(video_path):
     """Convert to 1080x1920 with a subtle crop offset and minor pitch shift."""
     try:
@@ -214,11 +364,15 @@ if __name__ == "__main__":
     processed = 0
     target = 5  # Changed from 3 to 5 for dog videos
     
+    # Configuration options
+    ENABLE_WATERMARK_DETECTION = True  # Set to False to disable TikTok watermark detection
+    
     drive_service = authenticate_drive()
     folder_id = get_or_create_folder(drive_service, "Dog Videos")  # Changed folder name
 
     print("\n" + "="*40)
     print(f"🚀 Processing {target} videos from r/dogvideos")
+    print(f"🔍 TikTok watermark detection: {'ENABLED' if ENABLE_WATERMARK_DETECTION else 'DISABLED'}")
     print("="*40)
 
     for post in reddit.subreddit("dogvideos").top(time_filter="day", limit=50):  # Changed subreddit
@@ -244,6 +398,12 @@ if __name__ == "__main__":
                 
             if not (10 <= duration <= 180):
                 print(f"⚠️ Skipping: Duration {duration}s out of range")
+                os.remove(video_path)
+                continue
+            
+            # Check for TikTok watermark before processing
+            if ENABLE_WATERMARK_DETECTION and detect_tiktok_watermark(video_path):
+                print(f"🚫 Skipping: TikTok watermark detected in {post.title[:50]}...")
                 os.remove(video_path)
                 continue
             
