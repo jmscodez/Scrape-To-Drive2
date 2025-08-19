@@ -153,7 +153,7 @@ def generate_headline(post_title):
             "Rules:\n"
             "- Use at most 2 relevant emojis.\n"
             "- No hashtags anywhere.\n"
-            "- Keep the caption under 200 characters and never more than one line.\n"
+            "- Keep the caption under 200 characters.\n"
             "- Make the caption short, natural, and exciting—summarize the moment.\n"
             "- Output ONLY the TikTok caption, and nothing else (no intro, formatting, or explanation).\n\n"
             f"Reddit title:\n{truncated_title}\n\n"
