@@ -147,48 +147,49 @@ def convert_to_tiktok(video_path):
 # ------------------ Headline Generation ------------------
 def generate_headline(post_title):
     try:
-        # Truncate the title to avoid hitting token limits
         truncated_title = post_title[:200]
         prompt = (
-            "Your job is to take captions that I give you and turn them into a headline that would be used on a TikTok video. "
-            "The output should ONLY be the new title. Rules:\n"
-            "1. It should be text at the top/bottom that explains what's happening in the video.\n"
-            "2. It should be tailored for TikTok SEO.\n"
-            "3. Remove any '_VERTICAL.mp4' text if present.\n"
-            "4. Use a max of 2 emojis.\n"
-            "5. NO HASHTAGS.\n"
-            "6. If a name is included, keep the name in the caption.\n"
-            "\nInput: '[Highlight] Cam Ward throws a dime at Miami Pro Day_VERTICAL'\n"
-            "Output: 'Cam Ward Drops a DIME at Miami Pro Day 🏈🔥'\n\n"
-            f"Now create a TikTok caption for this content: '{truncated_title}'"
+            "Rewrite the following Reddit NBA highlight as a catchy, viral TikTok caption.\n"
+            "Rules:\n"
+            "- Use at most 2 relevant emojis.\n"
+            "- No hashtags anywhere.\n"
+            "- Make the caption short, natural, and exciting—summarize the moment.\n"
+            "- Output ONLY the TikTok caption, and nothing else (no intro, formatting, or extra explanation).\n\n"
+            f"Reddit title:\n{truncated_title}\n\n"
+            "TikTok caption:"
         )
-
         headers = {
             "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "google/gemma-2-9b-it",
+            "model": "meta-llama/llama-3.2-11b-vision-instruct:free",
             "messages": [{
                 "role": "system",
-                "content": "You are a social media expert who creates viral TikTok captions for NBA content."
+                "content": (
+                    "You are a social media expert specializing in creating viral, concise TikTok captions from NBA highlight titles. "
+                    "Your output MUST be a single line: the final caption and nothing else."
+                )
             }, {
                 "role": "user",
                 "content": prompt
             }],
-            "max_tokens": 100,
-            "temperature": 0.7
+            "max_tokens": 60,  # 60 is enough for a short TikTok caption
+            "temperature": 0.85  # A bit higher for more creativity
         }
-
         response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
         response.raise_for_status()
-        caption = response.json()['choices'][0]['message']['content'].strip()
-        caption = re.sub(r'_VERTICAL\.mp4', '', caption) # Remove any remaining _VERTICAL.mp4
-        caption = re.sub(r'#\w+', '', caption) # Remove any hashtags
+        # Get only the first non-empty line and strip unwanted remnants
+        content = response.json()['choices'][0]['message']['content'].strip()
+        # Remove ANYthing before/after the first real line, in case the LLM puts instructions or blank lines
+        caption = content.split('\n').replace('_VERTICAL.mp4', '')
+        # Final cleanup for hashtags, HTML, trailing punctuation
+        caption = re.sub(r'#\w+', '', caption)
+        caption = caption.strip()
         return caption[:150]
     except Exception as e:
         print(f"⚠️ Headline generation failed: {str(e)}")
-        return sanitize_filename(post_title)[:100] # Fallback
+        return sanitize_filename(post_title)[:100]
 
 # ------------------ Main Process ------------------
 reddit = praw.Reddit(
