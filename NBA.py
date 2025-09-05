@@ -64,6 +64,18 @@ def get_video_resolution(path):
         return int(w), int(h)
     return None, None
 
+def get_true_duration(path):
+    """Return video duration in seconds using ffprobe."""
+    try:
+        proc = subprocess.run([
+            'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1', path
+        ], capture_output=True, text=True)
+        duration = float(proc.stdout.strip())
+        return duration
+    except Exception:
+        return 0
+
 # ------------------ Video Processing ------------------
 
 VIDEO_DOMAINS = {
@@ -205,7 +217,7 @@ def process_video_with_background(input_mp4, output_mp4, mode, post_title, team_
             'ffprobe', '-v', 'error', '-select_streams', 'v:0',
             '-show_entries', 'stream=duration', '-of', 'default=noprint_wrappers=1:nokey=1', input_mp4
         ], capture_output=True, text=True)
-        duration = float(probe.stdout.strip())
+        duration = float(proc.stdout.strip())
     except Exception:
         duration = 30
     n_locs = len(WATERMARK_POSITIONS)
@@ -248,7 +260,12 @@ if __name__ == "__main__":
         if not any(d in post.url for d in VIDEO_DOMAINS):
             continue
         path, dur = download_video(post.url)
-        if not path or not (10 <= dur <= 180):
+        if not path:
+            continue
+        # Double check and enforce duration using the actual downloaded file
+        true_dur = get_true_duration(path)
+        if not (10 <= true_dur <= 180):
+            os.remove(path)
             continue
 
         # Pick background style for THIS video
