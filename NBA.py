@@ -97,7 +97,7 @@ WATERMARK_POSITIONS = [
 ]
 
 def pick_background_type():
-    return random.choice(['black', 'blur', 'motion', 'teamcolor'])
+    return random.choice(['black', 'blur', 'teamcolor'])
 
 def get_team_from_title(title):
     for team in TEAM_COLORS:
@@ -195,8 +195,6 @@ def process_video_with_background(input_mp4, output_mp4, mode, post_title, team_
             "[main]scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2[main2];"
             "[bg2][main2]overlay=(W-w)/2:(H-h)/2"
         )
-    elif mode == "motion":
-        filter_vf = f"movie=motion_bg.mp4:loop=0,setpts=N/FRAME_RATE/TB[bg];[bg][0]overlay=(W-w)/2:(H-h)/2"
     elif mode == "teamcolor" and team_color:
         filter_vf = f"color=size=1080x1920:color={team_color}[bg];[0]scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2[main2];[bg][main2]overlay=(W-w)/2:(H-h)/2"
 
