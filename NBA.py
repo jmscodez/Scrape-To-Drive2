@@ -50,12 +50,11 @@ def sanitize_filename(fn):
     return fn.strip()[:100]
 
 def get_video_resolution(path):
-    """Return (width, height) of the first video stream via ffprobe."""
     cmd = [
-        'ffprobe','-v','error',
-        '-select_streams','v:0',
-        '-show_entries','stream=width,height',
-        '-of','csv=s=x:p=0',
+        'ffprobe', '-v', 'error',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height',
+        '-of', 'csv=s=x:p=0',
         path
     ]
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -65,7 +64,6 @@ def get_video_resolution(path):
     return None, None
 
 def get_true_duration(path):
-    """Return video duration in seconds using ffprobe."""
     try:
         proc = subprocess.run([
             'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
@@ -217,7 +215,7 @@ def process_video_with_background(input_mp4, output_mp4, mode, post_title, team_
             'ffprobe', '-v', 'error', '-select_streams', 'v:0',
             '-show_entries', 'stream=duration', '-of', 'default=noprint_wrappers=1:nokey=1', input_mp4
         ], capture_output=True, text=True)
-        duration = float(proc.stdout.strip())
+        duration = float(probe.stdout.strip())
     except Exception:
         duration = 30
     n_locs = len(WATERMARK_POSITIONS)
@@ -259,20 +257,23 @@ if __name__ == "__main__":
             break
         if not any(d in post.url for d in VIDEO_DOMAINS):
             continue
-        path, dur = download_video(post.url)
+        path, _ = download_video(post.url)
         if not path:
+            print(f"SKIP: Could not download video for {post.url}")
             continue
-        # Double check and enforce duration using the actual downloaded file
+
+        # ABSOLUTE DURATION FILTER: skip all videos not between 10–180 seconds, BEFORE ANY CONVERSION
         true_dur = get_true_duration(path)
+        print(f"CHECK: Downloaded video duration = {true_dur:.2f} seconds for post '{post.title[:60]}'")
         if not (10 <= true_dur <= 180):
+            print(f"SKIP: Removing video '{path}' with duration {true_dur:.2f} seconds (not in range 10-180s).")
             os.remove(path)
             continue
 
-        # Pick background style for THIS video
+        # Pick random background style for THIS video
         bg_mode = pick_background_type()
         team = get_team_from_title(post.title)
         team_color = TEAM_COLORS.get(team, "#000000")
-        # Compose output name
         base_out = os.path.splitext(path)[0]
         final_vid = f"{base_out}_VERTICAL.mp4"
 
@@ -303,3 +304,5 @@ if __name__ == "__main__":
             os.remove(final)
         processed += 1
         print(f"✅ Processed: {headline}")
+
+print("All done, finished scanning posts!")
