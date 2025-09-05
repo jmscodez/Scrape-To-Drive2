@@ -2,6 +2,7 @@ import os
 import re
 import subprocess
 import json
+import random
 import praw
 import yt_dlp
 import requests
@@ -11,13 +12,16 @@ from googleapiclient.http import MediaFileUpload
 from sheets_client import add_video_to_sheet
 
 # ------------------ Google Drive Integration ------------------
+
 SCOPES = ['https://www.googleapis.com/auth/drive']
 SERVICE_ACCOUNT_INFO = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT'])
+
 def authenticate_drive():
     creds = service_account.Credentials.from_service_account_info(
         SERVICE_ACCOUNT_INFO, scopes=SCOPES
     )
     return build('drive', 'v3', credentials=creds)
+
 def get_or_create_folder(drive_service, folder_name):
     q = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
     res = drive_service.files().list(q=q, fields="files(id)").execute()
@@ -29,6 +33,7 @@ def get_or_create_folder(drive_service, folder_name):
         fields='id'
     ).execute()
     return folder['id']
+
 def upload_to_drive(drive_service, folder_id, file_path):
     name = os.path.basename(file_path)
     media = MediaFileUpload(file_path)
@@ -39,9 +44,11 @@ def upload_to_drive(drive_service, folder_id, file_path):
     print(f"Uploaded {name} to Google Drive")
 
 # ------------------ Utilities ------------------
+
 def sanitize_filename(fn):
     fn = re.sub(r'[\\/*?:"<>|]', "", fn)
     return fn.strip()[:100]
+
 def get_video_resolution(path):
     """Return (width, height) of the first video stream via ffprobe."""
     cmd = [
@@ -53,17 +60,51 @@ def get_video_resolution(path):
     ]
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proc.returncode == 0 and 'x' in proc.stdout:
-        w,h = proc.stdout.strip().split('x')
+        w, h = proc.stdout.strip().split('x')
         return int(w), int(h)
     return None, None
 
-# ------------------ Video Download & Processing ------------------
+# ------------------ Video Processing ------------------
+
 VIDEO_DOMAINS = {
     'reddit.com','v.redd.it','youtube.com','youtu.be',
     'streamable.com','gfycat.com','imgur.com','tiktok.com',
     'instagram.com','twitter.com','x.com','twitch.tv',
     'dailymotion.com','rumble.com'
 }
+
+TEAM_COLORS = {
+    "Lakers": "#552583",
+    "Celtics": "#007A33",
+    "Heat": "#98002E",
+    "Knicks": "#F58426",
+    "Bulls": "#CE1141",
+    "Warriors": "#1D428A",
+    "Nets": "#000000",
+    "Suns": "#E56020",
+    "76ers": "#006BB6",
+    "Bucks": "#00471B"
+    # Add/modify as needed
+}
+
+WATERMARK_POSITIONS = [
+    ("30", "60"),      # top left
+    ("830", "50"),     # top right
+    ("30", "1800"),    # bottom left
+    ("830", "1800"),   # bottom right
+    ("450", "1650"),   # center bottom
+    ("450", "100"),    # center top
+]
+
+def pick_background_type():
+    return random.choice(['black', 'blur', 'motion', 'teamcolor'])
+
+def get_team_from_title(title):
+    for team in TEAM_COLORS:
+        if team.lower() in title.lower():
+            return team
+    return None
+
 def download_video(url):
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
@@ -76,9 +117,9 @@ def download_video(url):
         },
         'extractor_args': {'reddit': {'skip_auth': True}}
     }
-    # add universal cookies.txt support if you want to enable for e.g. Twitter/Instagram
     if os.path.exists("cookies.txt"):
         ydl_opts["cookiefile"] = "cookies.txt"
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -95,56 +136,8 @@ def download_video(url):
             return fn, info.get('duration',0)
     except Exception as e:
         print(f"❌ Download failed for {url}: {e}")
-        return None, 0
+    return None, 0
 
-def convert_to_tiktok(video_path):
-    """If aspect ratio ≈9:16: scale & crop.
-    Else: crop centered square, blur it to 1080x1920, overlay square."""
-    width, height = get_video_resolution(video_path)
-    if not width or not height:
-        print("⚠️ Could not get resolution; defaulting to simple crop")
-        method = 'simple'
-    else:
-        aspect = width/height
-        method = 'simple' if abs(aspect - 9/16) < 0.02 else 'blur'
-    output = video_path.replace(".mp4","_VERTICAL.mp4")
-    if method == 'simple':
-        # simple scale+crop to 1080x1920
-        cmd = [
-            'ffmpeg','-i',video_path,
-            '-vf','scale=1080:1920:force_original_aspect_ratio=increase,'
-                  'crop=1080:1920,setsar=1',
-            '-c:v','libx264','-preset','fast','-crf','23',
-            '-c:a','aac','-y', output
-        ]
-    else:
-        # square size = min(width,height)
-        sq = min(width, height)
-        x_off = (width - sq)/2
-        y_off = (height - sq)/2
-        # filter: split into two streams, one blurred background, one FG square
-        filt = (
-            f"split=2[bgsrc][fgsrc];"
-            f"[bgsrc]crop={sq}:{sq}:{x_off}:{y_off},"
-            f"scale=1080:1920,setsar=1,gblur=sigma=20[bg];"
-            f"[fgsrc]crop={sq}:{sq}:{x_off}:{y_off},"
-            f"scale=1080:1080,setsar=1[fg];"
-            f"[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto,setsar=1"
-        )
-        cmd = [
-            'ffmpeg','-i',video_path,
-            '-vf', filt,
-            '-c:v','libx264','-preset','fast','-crf','23',
-            '-c:a','aac','-y', output
-        ]
-    try:
-        subprocess.run(cmd, check=True)
-        return output
-    except Exception as e:
-        print(f"❌ Conversion failed ({method}): {e}")
-        return None
-
-# ------------------ Headline Generation ------------------
 def generate_headline(post_title):
     try:
         truncated_title = post_title[:200]
@@ -175,14 +168,13 @@ def generate_headline(post_title):
                 "role": "user",
                 "content": prompt
             }],
-            "max_tokens": 500,  # Allow slightly longer for safety
+            "max_tokens": 500,
             "temperature": 0.85
         }
         response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
         response.raise_for_status()
         content = response.json()['choices'][0]['message']['content'].strip()
-        # Only take first line and trim
-        caption = content.split('\n').replace('_VERTICAL.mp4', '')
+        caption = content.split('\n')[0].replace('_VERTICAL.mp4', '')
         caption = re.sub(r'#\w+', '', caption)
         caption = caption.strip()
         if len(caption) > 200:
@@ -192,12 +184,62 @@ def generate_headline(post_title):
         print(f"⚠️ Headline generation failed: {str(e)}")
         return sanitize_filename(post_title)[:100]
 
+def process_video_with_background(input_mp4, output_mp4, mode, post_title, team_color=None):
+    filter_vf = ""
+    if mode == "black":
+        filter_vf = "scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
+    elif mode == "blur":
+        filter_vf = (
+            "split=2[main][bg];"
+            "[bg]crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920,boxblur=20[bg2];"
+            "[main]scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2[main2];"
+            "[bg2][main2]overlay=(W-w)/2:(H-h)/2"
+        )
+    elif mode == "motion":
+        filter_vf = f"movie=motion_bg.mp4:loop=0,setpts=N/FRAME_RATE/TB[bg];[bg][0]overlay=(W-w)/2:(H-h)/2"
+    elif mode == "teamcolor" and team_color:
+        filter_vf = f"color=size=1080x1920:color={team_color}[bg];[0]scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2[main2];[bg][main2]overlay=(W-w)/2:(H-h)/2"
+
+    # Watermark animation setup (moves position every 7 seconds)
+    drawtext_filters = ""
+    try:
+        probe = subprocess.run([
+            'ffprobe', '-v', 'error', '-select_streams', 'v:0',
+            '-show_entries', 'stream=duration', '-of', 'default=noprint_wrappers=1:nokey=1', input_mp4
+        ], capture_output=True, text=True)
+        duration = float(probe.stdout.strip())
+    except Exception:
+        duration = 30
+    n_locs = len(WATERMARK_POSITIONS)
+    interval = 7
+    for i, (x, y) in enumerate(WATERMARK_POSITIONS):
+        start = i * interval
+        end = min((i + 1) * interval, int(duration))
+        draw = (
+            f"drawtext=text='@impulseprod':fontcolor=white:fontsize=60:x={x}:y={y}:"
+            f"box=1:boxborderw=6:boxcolor=black@0.1:enable='between(t,{start},{end})',"
+        )
+        drawtext_filters += draw
+    full_filter = filter_vf + "," + drawtext_filters[:-1]  # Remove trailing comma
+    cmd = [
+        'ffmpeg','-y','-i',input_mp4,
+        '-vf',full_filter,
+        '-c:v','libx264','-preset','fast','-crf','23',
+        '-c:a','aac',output_mp4
+    ]
+    try:
+        subprocess.run(cmd, check=True)
+    except Exception as e:
+        print(f"❌ Processing failed: {e}")
+
 # ------------------ Main Process ------------------
+
 reddit = praw.Reddit(
     client_id=os.environ['REDDIT_CLIENT_ID'],
     client_secret=os.environ['REDDIT_CLIENT_SECRET'],
     user_agent="script:mybot:v1.0"
 )
+
 if __name__ == "__main__":
     drive = authenticate_drive()
     folder_id = get_or_create_folder(drive, "Impulse")
@@ -210,14 +252,29 @@ if __name__ == "__main__":
         path, dur = download_video(post.url)
         if not path or not (10 <= dur <= 180):
             continue
-        vert = convert_to_tiktok(path)
+
+        # Pick background style for THIS video
+        bg_mode = pick_background_type()
+        team = get_team_from_title(post.title)
+        team_color = TEAM_COLORS.get(team, "#000000")
+        # Compose output name
+        base_out = os.path.splitext(path)[0]
+        final_vid = f"{base_out}_VERTICAL.mp4"
+
+        process_video_with_background(
+            input_mp4=path,
+            output_mp4=final_vid,
+            mode=bg_mode if bg_mode != "teamcolor" else "teamcolor",
+            post_title=post.title,
+            team_color=team_color
+        )
+
         os.remove(path)
-        if not vert:
-            continue
         headline = sanitize_filename(generate_headline(post.title))
         final = f"{headline}.mp4"
-        os.rename(vert, final)
+        os.rename(final_vid, final)
         upload_to_drive(drive, folder_id, final)
+
         # --- Add data to Google Sheet ---
         try:
             add_video_to_sheet(
@@ -228,6 +285,6 @@ if __name__ == "__main__":
             )
         except Exception as e:
             print(f"⚠️ Failed to add data to Google Sheet: {e}")
-        os.remove(final)
+            os.remove(final)
         processed += 1
         print(f"✅ Processed: {headline}")
