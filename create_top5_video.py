@@ -9,9 +9,6 @@ from PIL import Image, ImageDraw, ImageFont
 import ffmpeg
 
 # ========= CONFIG ===========
-# -- ENV SECRETS --
-HIGHLIGHTLY_API_KEY = os.getenv('HIGHLIGHTLY_API_KEY')
-
 SHEET_ID = '1NR_UyXshaiJ9X2XFdVPpch3fpdJZUq6qLmGeMesUMrQ'
 SHEET_TAB = 'Top_5_Master'
 DOWNLOAD_DIR = './downloads'
@@ -19,7 +16,7 @@ OUT_VIDEO = './final.mp4'
 GDRIVE_PARENT = 'impulse'
 GDRIVE_FOLDER = 'Top 5'
 
-# Google Service Account for both Google Sheets and Drive
+# Google Service Account AUTH (for both Sheets and Drive)
 creds_json = os.getenv('GDRIVE_SERVICE_ACCOUNT')
 creds = Credentials.from_service_account_info(json.loads(creds_json),
     scopes=[
@@ -31,7 +28,6 @@ import googleapiclient.discovery
 drive_service = googleapiclient.discovery.build('drive', 'v3', credentials=creds)
 
 def ensure_drive_folder(parent, child):
-    # Ensure /impulse/Top 5 exists, return its ID
     def find_folder(name, parent_id):
         result = drive_service.files().list(q=f"mimeType='application/vnd.google-apps.folder' and trashed=false and name='{name}' and '{parent_id}' in parents", fields="files(id)").execute()
         files = result.get('files', [])
@@ -43,7 +39,7 @@ def ensure_drive_folder(parent, child):
 def update_sheet_used(row_index):
     sh = gc.open_by_key(SHEET_ID)
     ws = sh.worksheet(SHEET_TAB)
-    ws.update_cell(row_index+2, 6, "Yes")  # Update "Used?" (1-based, plus header)
+    ws.update_cell(row_index+2, 6, "Yes")  # 1-based with header row
 
 def get_next_unused_idea():
     sh = gc.open_by_key(SHEET_ID)
@@ -59,12 +55,29 @@ def get_suggestions(row):
     return [row[f'Suggestion {i}'] for i in range(1, 11) if row.get(f'Suggestion {i}', '').strip()]
 
 def search_highlightly(query, sport):
-    endpoint = 'football' if sport.lower() == 'nfl' else 'basketball'
-    url = f'https://highlightly.net/api/{endpoint}/highlights?search={requests.utils.quote(query)}'
-    resp = requests.get(url, headers={"Authorization": f"Bearer {HIGHLIGHTLY_API_KEY}"})
-    results = resp.json()
-    if 'data' in results and results['data']:
-        return results['data'][0]['media_url']
+    # Only works for NFL, as per current RapidAPI docs!
+    base_url = "https://sport-highlights-api.p.rapidapi.com/american-football/highlights"
+    params = {
+        "leagueType": "NFL",   # NCAA? Change here.
+        "limit": 40
+    }
+    headers = {
+        "x-rapidapi-key": os.getenv("RAPIDAPI_KEY"),
+        "x-rapidapi-host": "sport-highlights-api.p.rapidapi.com"
+    }
+    resp = requests.get(base_url, headers=headers, params=params)
+    try:
+        results = resp.json()
+    except Exception:
+        print("API error or bad response:", resp.status_code, resp.text[:500])
+        return None
+    # Filter for matching query in title
+    for item in results.get("highlights", []):
+        if query.lower() in item.get("title", "").lower():
+            return item.get("url") or item.get("videoUrl") or item.get("mediaUrl")
+    # Fallback: just return first highlight
+    if results.get("highlights"):
+        return results["highlights"][0].get("url") or results["highlights"][0].get("videoUrl") or results["highlights"][0].get("mediaUrl")
     return None
 
 def download_video(url, outname):
@@ -130,7 +143,6 @@ def main():
             highlight_urls.append(url)
         if len(highlight_urls) >= 5:
             break
-    # Fallback—if <5 found, use main title keyword
     attempts = 0
     while len(highlight_urls) < 5 and attempts < 5:
         generic = search_highlightly(title, sport)
@@ -146,15 +158,12 @@ def main():
         filenames.append(fname)
     print("Downloaded highlight clips.")
 
-    # Overlays for #1 to #5
     rank_titles = [f"#{i+1}" for i in range(5)]
     combine_clips_with_overlays(rank_titles, filenames, OUT_VIDEO)
     print("Video composed.")
 
-    # Update sheet
     update_sheet_used(rowidx)
 
-    # Upload to /impulse/Top 5
     folder_id = ensure_drive_folder(GDRIVE_PARENT, GDRIVE_FOLDER)
     upload_to_drive(OUT_VIDEO, folder_id)
     print("Uploaded to Google Drive.")
