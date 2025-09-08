@@ -186,24 +186,13 @@ def process_video_with_background(input_mp4, output_mp4, mode):
     if mode == "black":
         filter_vf = "scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
     elif mode == "blur":
-        # Get video resolution for blur method
-        width, height = get_video_resolution(input_mp4)
-        if not width or not height:
-            print("⚠️ Could not get resolution; falling back to black bars")
-            filter_vf = "scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
-        else:
-            # Use the exact blur method from the attached file
-            sq = min(width, height)
-            x_off = (width - sq) // 2
-            y_off = (height - sq) // 2
-            filter_vf = (
-                f"split=2[bgsrc][fgsrc];"
-                f"[bgsrc]crop={sq}:{sq}:{x_off}:{y_off},"
-                f"scale=1080:1920,setsar=1,gblur=sigma=20[bg];"
-                f"[fgsrc]crop={sq}:{sq}:{x_off}:{y_off},"
-                f"scale=1080:1080,setsar=1[fg];"
-                f"[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto,setsar=1"
-            )
+        # Keep video intact, use blur for background only
+        filter_vf = (
+            "split=2[main][bg];"
+            "[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=20[bg2];"
+            "[main]scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2[main2];"
+            "[bg2][main2]overlay=(W-w)/2:(H-h)/2"
+        )
     else:
         # Fallback to black bars
         print(f"⚠️ Warning: Unknown mode '{mode}', falling back to black bars")
