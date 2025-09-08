@@ -63,18 +63,7 @@ def get_video_resolution(path):
         return int(w), int(h)
     return None, None
 
-def get_true_duration(path):
-    try:
-        proc = subprocess.run([
-            'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
-            '-of', 'default=noprint_wrappers=1:nokey=1', path
-        ], capture_output=True, text=True)
-        duration = float(proc.stdout.strip())
-        return duration
-    except Exception:
-        return 0
-
-# ------------------ Video Processing ------------------
+# ------------------ Video Download & Processing ------------------
 
 VIDEO_DOMAINS = {
     'reddit.com','v.redd.it','youtube.com','youtu.be',
@@ -139,6 +128,31 @@ def download_video(url):
         print(f"❌ Download failed for {url}: {e}")
     return None, 0
 
+def process_video_with_background(input_mp4, output_mp4, mode, team_color=None):
+    filter_vf = ""
+    if mode == "black":
+        filter_vf = "scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
+    elif mode == "blur":
+        filter_vf = (
+            "split=2[main][bg];"
+            "[bg]crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920,boxblur=20[bg2];"
+            "[main]scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2[main2];"
+            "[bg2][main2]overlay=(W-w)/2:(H-h)/2"
+        )
+    elif mode == "teamcolor" and team_color:
+        filter_vf = f"color=size=1080x1920:color={team_color}[bg];[0]scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2[main2];[bg][main2]overlay=(W-w)/2:(H-h)/2"
+
+    cmd = [
+        'ffmpeg', '-y', '-i', input_mp4,
+        '-vf', filter_vf,
+        '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+        '-c:a', 'aac', output_mp4
+    ]
+    try:
+        subprocess.run(cmd, check=True)
+    except Exception as e:
+        print(f"❌ Processing failed: {e}")
+
 def generate_headline(post_title):
     try:
         truncated_title = post_title[:200]
@@ -185,31 +199,6 @@ def generate_headline(post_title):
         print(f"⚠️ Headline generation failed: {str(e)}")
         return sanitize_filename(post_title)[:100]
 
-def process_video_with_background(input_mp4, output_mp4, mode, post_title, team_color=None):
-    filter_vf = ""
-    if mode == "black":
-        filter_vf = "scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
-    elif mode == "blur":
-        filter_vf = (
-            "split=2[main][bg];"
-            "[bg]crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920,boxblur=20[bg2];"
-            "[main]scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2[main2];"
-            "[bg2][main2]overlay=(W-w)/2:(H-h)/2"
-        )
-    elif mode == "teamcolor" and team_color:
-        filter_vf = f"color=size=1080x1920:color={team_color}[bg];[0]scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2[main2];[bg][main2]overlay=(W-w)/2:(H-h)/2"
-
-    cmd = [
-        'ffmpeg','-y','-i',input_mp4,
-        '-vf',filter_vf,
-        '-c:v','libx264','-preset','fast','-crf','23',
-        '-c:a','aac',output_mp4
-    ]
-    try:
-        subprocess.run(cmd, check=True)
-    except Exception as e:
-        print(f"❌ Processing failed: {e}")
-
 # ------------------ Main Process ------------------
 
 reddit = praw.Reddit(
@@ -227,41 +216,32 @@ if __name__ == "__main__":
             break
         if not any(d in post.url for d in VIDEO_DOMAINS):
             continue
-        path, _ = download_video(post.url)
-        if not path:
-            print(f"SKIP: Could not download video for {post.url}")
+
+        path, dur = download_video(post.url)
+        # Enforce strict duration filter -- ONLY run process if dur is valid
+        if not path or not (10 <= dur <= 180):
+            print(f"SKIP: {post.url} (dur={dur})")
+            if path:
+                os.remove(path)
             continue
 
-        # ABSOLUTE DURATION FILTER: skip all videos not between 10–180 seconds, BEFORE ANY CONVERSION
-        true_dur = get_true_duration(path)
-        print(f"CHECK: Downloaded video duration = {true_dur:.2f} seconds for post '{post.title[:60]}'")
-        if not (10 <= true_dur <= 180):
-            print(f"SKIP: Removing video '{path}' with duration {true_dur:.2f} seconds (not in range 10-180s).")
-            os.remove(path)
-            continue
-
-        # Pick random background style for THIS video
+        print(f"PROCESS: {post.url} (dur={dur})")
+        # Pick random background style here
         bg_mode = pick_background_type()
         team = get_team_from_title(post.title)
         team_color = TEAM_COLORS.get(team, "#000000")
-        base_out = os.path.splitext(path)[0]
-        final_vid = f"{base_out}_VERTICAL.mp4"
-
+        final_vid = path.replace(".mp4", "_VERTICAL.mp4")
         process_video_with_background(
             input_mp4=path,
             output_mp4=final_vid,
             mode=bg_mode if bg_mode != "teamcolor" else "teamcolor",
-            post_title=post.title,
             team_color=team_color
         )
-
         os.remove(path)
         headline = sanitize_filename(generate_headline(post.title))
         final = f"{headline}.mp4"
         os.rename(final_vid, final)
         upload_to_drive(drive, folder_id, final)
-
-        # --- Add data to Google Sheet ---
         try:
             add_video_to_sheet(
                 source="NBA",
