@@ -6,18 +6,47 @@ import random
 import praw
 import yt_dlp
 import requests
+import logging
+import time
+from contextlib import contextmanager
+from functools import wraps
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from sheets_client import add_video_to_sheet
+
+# ------------------ Logging Setup ------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('nba_processor.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# ------------------ Environment Variable Validation ------------------
+REQUIRED_ENV_VARS = [
+    'REDDIT_CLIENT_ID',
+    'REDDIT_CLIENT_SECRET',
+    'OPENROUTER_API_KEY',
+    'GDRIVE_SERVICE_ACCOUNT'
+]
+missing = [var for var in REQUIRED_ENV_VARS if not os.environ.get(var)]
+if missing:
+    raise ValueError(f"Missing required environment variables: {missing}")
+
 # ------------------ Google Drive Integration ------------------
 SCOPES = ['https://www.googleapis.com/auth/drive']
 SERVICE_ACCOUNT_INFO = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT'])
+
 def authenticate_drive():
     creds = service_account.Credentials.from_service_account_info(
         SERVICE_ACCOUNT_INFO, scopes=SCOPES
     )
     return build('drive', 'v3', credentials=creds)
+
 def get_or_create_folder(drive_service, folder_name):
     q = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
     res = drive_service.files().list(q=q, fields="files(id)").execute()
@@ -29,27 +58,37 @@ def get_or_create_folder(drive_service, folder_name):
         fields='id'
     ).execute()
     return folder['id']
+
 def upload_to_drive(drive_service, folder_id, file_path):
     name = os.path.basename(file_path)
     media = MediaFileUpload(file_path)
-    drive_service.files().create(
-        body={'name': name, 'parents': [folder_id]},
-        media_body=media
-    ).execute()
-    print(f"Uploaded {name} to Google Drive")
-# ------------------ Utilities ------------------
+    try:
+        drive_service.files().create(
+            body={'name': name, 'parents': [folder_id]},
+            media_body=media
+        ).execute()
+        print(f"Uploaded {name} to Google Drive")
+    except Exception as e:
+        print(f"❌ Google Drive upload failed: {e}")
+        raise
+
+# ------------------ Utility Functions ------------------
 def sanitize_filename(fn):
     fn = re.sub(r'[\/*?:"<>|]', "", fn)
     return fn.strip()[:100]
+
 def get_true_duration(path):
     try:
         result = subprocess.run(
-            ['ffprobe','-v','error','-show_entries','format=duration','-of','default=noprint_wrappers=1:nokey=1', path],
+            ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of',
+             'default=noprint_wrappers=1:nokey=1', path],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
         return float(result.stdout.strip())
-    except Exception:
+    except Exception as e:
+        print(f"ffprobe error on {path}: {e}")
         return 0
+
 def get_video_resolution(path):
     cmd = [
         'ffprobe', '-v', 'error',
@@ -63,6 +102,38 @@ def get_video_resolution(path):
         w, h = proc.stdout.strip().split('x')
         return int(w), int(h)
     return None, None
+
+@contextmanager
+def temporary_files(*file_paths):
+    try:
+        yield
+    finally:
+        for path in file_paths:
+            if os.path.exists(path):
+                os.remove(path)
+
+def safe_cleanup(*file_paths):
+    for path in file_paths:
+        if path and os.path.exists(path):
+            os.remove(path)
+
+def retry_with_backoff(max_retries=3, exceptions=(Exception,)):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    print(f"Attempt {attempt+1}: {e}, retrying...")
+                    if attempt == max_retries - 1:
+                        print(f"Exceeded maximum retries for {func.__name__}")
+                        raise
+                    time.sleep(2 ** attempt)
+            return None
+        return wrapper
+    return decorator
+
 # ------------------ Video Download & Processing ------------------
 VIDEO_DOMAINS = {
     'reddit.com','v.redd.it','youtube.com','youtu.be',
@@ -70,26 +141,11 @@ VIDEO_DOMAINS = {
     'instagram.com','twitter.com','x.com','twitch.tv',
     'dailymotion.com','rumble.com'
 }
-TEAM_COLORS = {
-    "Lakers": "#552583",
-    "Celtics": "#007A33",
-    "Heat": "#98002E",
-    "Knicks": "#F58426",
-    "Bulls": "#CE1141",
-    "Warriors": "#1D428A",
-    "Nets": "#000000",
-    "Suns": "#E56020",
-    "76ers": "#006BB6",
-    "Bucks": "#00471B"
-    # Add/modify as needed
-}
+
 def pick_background_type():
-    return random.choice(['black', 'blur', 'teamcolor'])
-def get_team_from_title(title):
-    for team in TEAM_COLORS:
-        if team.lower() in title.lower():
-            return team
-    return None
+    return random.choice(['black', 'blur'])
+
+@retry_with_backoff(max_retries=3)
 def download_video(url):
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
@@ -110,8 +166,8 @@ def download_video(url):
             fn = ydl.prepare_filename(info)
             # verify audio
             result = subprocess.run(
-                ['ffprobe','-v','error','-select_streams','a',
-                 '-show_entries','stream=codec_type','-of','csv=p=0', fn],
+                ['ffprobe', '-v', 'error', '-select_streams', 'a',
+                 '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', fn],
                 stdout=subprocess.PIPE, text=True
             )
             if 'audio' not in result.stdout:
@@ -121,40 +177,59 @@ def download_video(url):
     except Exception as e:
         print(f"❌ Download failed for {url}: {e}")
     return None
+
 MAX_PROCESS_SECONDS = 600  # 10 minutes in seconds
-def process_video_with_background(input_mp4, output_mp4, mode, team_color=None):
-    filter_vf = ""
+
+def process_video_with_background(input_mp4, output_mp4, mode):
+    print(f"🎨 Processing with background mode: {mode}")
+    
     if mode == "black":
         filter_vf = "scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
     elif mode == "blur":
-        filter_vf = (
-            "split=2[main][bg];"
-            "[bg]crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920,boxblur=20[bg2];"
-            "[main]scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2[main2];"
-            "[bg2][main2]overlay=(W-w)/2:(H-h)/2"
-        )
-    elif mode == "teamcolor" and team_color:
-        filter_vf = f"color=size=1080x1920:color={team_color}[bg];[0]scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2[main2];[bg][main2]overlay=(W-w)/2:(H-h)/2"
+        # Get video resolution for blur method
+        width, height = get_video_resolution(input_mp4)
+        if not width or not height:
+            print("⚠️ Could not get resolution; falling back to black bars")
+            filter_vf = "scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
+        else:
+            # Use the exact blur method from the attached file
+            sq = min(width, height)
+            x_off = (width - sq) // 2
+            y_off = (height - sq) // 2
+            filter_vf = (
+                f"split=2[bgsrc][fgsrc];"
+                f"[bgsrc]crop={sq}:{sq}:{x_off}:{y_off},"
+                f"scale=1080:1920,setsar=1,gblur=sigma=20[bg];"
+                f"[fgsrc]crop={sq}:{sq}:{x_off}:{y_off},"
+                f"scale=1080:1080,setsar=1[fg];"
+                f"[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto,setsar=1"
+            )
+    else:
+        # Fallback to black bars
+        print(f"⚠️ Warning: Unknown mode '{mode}', falling back to black bars")
+        filter_vf = "scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
+    
     cmd = [
         'ffmpeg', '-y', '-i', input_mp4,
         '-vf', filter_vf,
         '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
         '-c:a', 'aac', output_mp4
     ]
+    
+    print(f"🔧 Running FFmpeg command with filter...")
+    
     try:
         subprocess.run(cmd, check=True, timeout=MAX_PROCESS_SECONDS)
+        print(f"✅ Successfully processed video with {mode} background")
     except subprocess.TimeoutExpired:
         print(f"🛑 TIMEOUT: ffmpeg took too long (>{MAX_PROCESS_SECONDS}s)! Deleting files and skipping this video.")
-        if os.path.exists(input_mp4):
-            os.remove(input_mp4)
-        if os.path.exists(output_mp4):
-            os.remove(output_mp4)
-        # Signal skip to main loop
+        safe_cleanup(input_mp4, output_mp4)
         raise
     except Exception as e:
         print(f"❌ Processing failed: {e}")
-        if os.path.exists(output_mp4):
-            os.remove(output_mp4)
+        safe_cleanup(output_mp4)
+        raise
+
 def generate_headline(post_title):
     try:
         truncated_title = post_title[:200]
@@ -188,7 +263,7 @@ def generate_headline(post_title):
             "max_tokens": 500,
             "temperature": 0.85
         }
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers, timeout=20)
         response.raise_for_status()
         content = response.json()['choices'][0]['message']['content'].strip()
         caption = content.split('\n')[0].replace('_VERTICAL.mp4', '')
@@ -200,56 +275,87 @@ def generate_headline(post_title):
     except Exception as e:
         print(f"⚠️ Headline generation failed: {str(e)}")
         return sanitize_filename(post_title)[:100]
+
 # ------------------ Main Process ------------------
 reddit = praw.Reddit(
     client_id=os.environ['REDDIT_CLIENT_ID'],
     client_secret=os.environ['REDDIT_CLIENT_SECRET'],
     user_agent="script:mybot:v1.0"
 )
+
+MAX_VIDEOS = 3
+MAX_POSTS = 20  # Lowered for efficiency
+MIN_SECONDS = 10
+MAX_SECONDS = 180
+
 if __name__ == "__main__":
     drive = authenticate_drive()
     folder_id = get_or_create_folder(drive, "Impulse")
     processed = 0
-    for post in reddit.subreddit("NBA").top(time_filter="day", limit=50):
-        if processed >= 3:
+
+    # Pre-filter posts before running expensive video downloads
+    print("Fetching new posts from r/NBA...")
+    posts = [
+        post for post in reddit.subreddit("NBA").top(time_filter="day", limit=MAX_POSTS)
+        if any(d in post.url for d in VIDEO_DOMAINS)
+    ]
+    print(f"Found {len(posts)} potential posts with video URLs.")
+
+    for post in posts:
+        if processed >= MAX_VIDEOS:
             break
-        if not any(d in post.url for d in VIDEO_DOMAINS):
-            continue
+
+        print(f"Examining post: {post.title[:60]} | URL: {post.url}")
+
+        # Download video with backoff/retries
         path = download_video(post.url)
         if not path or not os.path.isfile(path):
             print(f"⏭️ SKIP: Could not download video for {post.url}")
             continue
+
         true_dur = get_true_duration(path)
         print(f"🕒 CHECK: Downloaded video duration = {true_dur:.2f} sec for post '{post.title[:60]}'")
-        if not (10 <= true_dur <= 180):
-            print(f"⏭️ SKIP: Removing video '{path}' with duration {true_dur:.2f} sec (⛔ not in range 10-180s).")
-            os.remove(path)
+        if not (MIN_SECONDS <= true_dur <= MAX_SECONDS):
+            print(f"⏭️ SKIP: Removing video '{path}' with duration {true_dur:.2f} sec (⛔ not in range {MIN_SECONDS}-{MAX_SECONDS}s).")
+            safe_cleanup(path)
             continue
+
         print(f"✅ PROCESS: {post.url} (duration={true_dur:.2f}s, proceeding!)")
         bg_mode = pick_background_type()
-        team = get_team_from_title(post.title)
-        team_color = TEAM_COLORS.get(team, "#000000")
+        
+        print(f"🎲 Selected background mode: {bg_mode}")
+        
         final_vid = path.replace(".mp4", "_VERTICAL.mp4")
+
         try:
             process_video_with_background(
                 input_mp4=path,
                 output_mp4=final_vid,
-                mode=bg_mode if bg_mode != "teamcolor" else "teamcolor",
-                team_color=team_color
+                mode=bg_mode
             )
         except subprocess.TimeoutExpired:
             print(f"⏭️ SKIP: Video processing killed due to excess runtime. Removing and proceeding to next video.")
-            if os.path.exists(path):
-                os.remove(path)
-            if os.path.exists(final_vid):
-                os.remove(final_vid)
+            safe_cleanup(path, final_vid)
             continue
-        os.remove(path)
+        except Exception as e:
+            print(f"⏭️ SKIP: Video processing failed. {e}")
+            safe_cleanup(path, final_vid)
+            continue
+
+        safe_cleanup(path)
+
         headline = sanitize_filename(generate_headline(post.title))
         final = f"{headline}.mp4"
-        os.rename(final_vid, final)
-        upload_to_drive(drive, folder_id, final)
         try:
+            os.rename(final_vid, final)
+        except Exception as e:
+            print(f"⚠️ Rename failed: {e}")
+            safe_cleanup(final_vid)
+            continue
+
+        # Attempt upload and logging; ensure cleanup on failure
+        try:
+            upload_to_drive(drive, folder_id, final)
             add_video_to_sheet(
                 source="NBA",
                 reddit_url=post.url,
@@ -257,8 +363,12 @@ if __name__ == "__main__":
                 drive_video_name=headline
             )
         except Exception as e:
-            print(f"⚠️ Failed to add data to Google Sheet: {e}")
-            os.remove(final)
+            print(f"⚠️ Failed to add data to Google Sheet or upload to Drive: {e}")
+            safe_cleanup(final)
+            continue
+
+        safe_cleanup(final)
         processed += 1
         print(f"✅ Processed: {headline}")
-print("All done, finished scanning posts!")
+
+    print("All done, finished scanning posts!")
