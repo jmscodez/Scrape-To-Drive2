@@ -12,7 +12,6 @@ from googleapiclient.http import MediaFileUpload
 from sheets_client import add_video_to_sheet
 
 # ------------------ Google Drive Integration ------------------
-
 SCOPES = ['https://www.googleapis.com/auth/drive']
 SERVICE_ACCOUNT_INFO = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT'])
 
@@ -27,7 +26,7 @@ def get_or_create_folder(drive_service, folder_name):
     res = drive_service.files().list(q=q, fields="files(id)").execute()
     items = res.get('files', [])
     if items:
-        return items[0]['id']
+        return items['id']
     folder = drive_service.files().create(
         body={'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'},
         fields='id'
@@ -44,9 +43,8 @@ def upload_to_drive(drive_service, folder_id, file_path):
     print(f"Uploaded {name} to Google Drive")
 
 # ------------------ Utilities ------------------
-
 def sanitize_filename(fn):
-    fn = re.sub(r'[\\/*?:"<>|]', "", fn)
+    fn = re.sub(r'[\/*?:"<>|]', "", fn)
     return fn.strip()[:100]
 
 def get_true_duration(path):
@@ -74,7 +72,6 @@ def get_video_resolution(path):
     return None, None
 
 # ------------------ Video Download & Processing ------------------
-
 VIDEO_DOMAINS = {
     'reddit.com','v.redd.it','youtube.com','youtu.be',
     'streamable.com','gfycat.com','imgur.com','tiktok.com',
@@ -82,28 +79,9 @@ VIDEO_DOMAINS = {
     'dailymotion.com','rumble.com'
 }
 
-TEAM_COLORS = {
-    "Lakers": "#552583",
-    "Celtics": "#007A33",
-    "Heat": "#98002E",
-    "Knicks": "#F58426",
-    "Bulls": "#CE1141",
-    "Warriors": "#1D428A",
-    "Nets": "#000000",
-    "Suns": "#E56020",
-    "76ers": "#006BB6",
-    "Bucks": "#00471B"
-    # Add/modify as needed
-}
-
 def pick_background_type():
-    return random.choice(['black', 'blur', 'teamcolor'])
-
-def get_team_from_title(title):
-    for team in TEAM_COLORS:
-        if team.lower() in title.lower():
-            return team
-    return None
+    # Only randomize between black bars and blur for this version
+    return random.choice(['black', 'blur'])
 
 def download_video(url):
     ydl_opts = {
@@ -119,7 +97,6 @@ def download_video(url):
     }
     if os.path.exists("cookies.txt"):
         ydl_opts["cookiefile"] = "cookies.txt"
-
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -140,19 +117,26 @@ def download_video(url):
 
 MAX_PROCESS_SECONDS = 600  # 10 minutes in seconds
 
-def process_video_with_background(input_mp4, output_mp4, mode, team_color=None):
-    filter_vf = ""
+def process_video_with_background(input_mp4, output_mp4, mode):
+    """
+    - black: scale+pad to 1080x1920 pillarbox.
+    - blur: create blurred 9:16 background, scale foreground WITHOUT padding, then center overlay so blur is visible.
+    """
     if mode == "black":
         filter_vf = "scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
     elif mode == "blur":
         filter_vf = (
-            "split=2[main][bg];"
-            "[bg]crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920,boxblur=20[bg2];"
-            "[main]scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2[main2];"
-            "[bg2][main2]overlay=(W-w)/2:(H-h)/2"
+            "split=2[fg][bg];"
+            # Background: 9:16 center crop from source, scale to 1080x1920, blur
+            "[bg]crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920,boxblur=20[bgv];"
+            # Foreground: scale to fit width 1080 (no padding), keep AR
+            "[fg]scale=1080:-1:flags=lanczos[fgv];"
+            # Overlay centered so blurred top/bottom (or sides) remain visible
+            "[bgv][fgv]overlay=(W-w)/2:(H-h)/2:format=auto"
         )
-    elif mode == "teamcolor" and team_color:
-        filter_vf = f"color=size=1080x1920:color={team_color}[bg];[0]scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2[main2];[bg][main2]overlay=(W-w)/2:(H-h)/2"
+    else:
+        # Fallback to black if an unexpected mode appears
+        filter_vf = "scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
 
     cmd = [
         'ffmpeg', '-y', '-i', input_mp4,
@@ -168,7 +152,6 @@ def process_video_with_background(input_mp4, output_mp4, mode, team_color=None):
             os.remove(input_mp4)
         if os.path.exists(output_mp4):
             os.remove(output_mp4)
-        # Signal skip to main loop
         raise
     except Exception as e:
         print(f"❌ Processing failed: {e}")
@@ -210,8 +193,8 @@ def generate_headline(post_title):
         }
         response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
         response.raise_for_status()
-        content = response.json()['choices'][0]['message']['content'].strip()
-        caption = content.split('\n')[0].replace('_VERTICAL.mp4', '')
+        content = response.json()['choices']['message']['content'].strip()
+        caption = content.split('\n').replace('_VERTICAL.mp4', '')
         caption = re.sub(r'#\w+', '', caption)
         caption = caption.strip()
         if len(caption) > 200:
@@ -232,6 +215,7 @@ if __name__ == "__main__":
     drive = authenticate_drive()
     folder_id = get_or_create_folder(drive, "Impulse")
     processed = 0
+
     for post in reddit.subreddit("NBA").top(time_filter="day", limit=50):
         if processed >= 3:
             break
@@ -250,18 +234,19 @@ if __name__ == "__main__":
             os.remove(path)
             continue
 
-        print(f"✅ PROCESS: {post.url} (duration={true_dur:.2f}s, proceeding!)")
+        # Randomize style per video and print decision
         bg_mode = pick_background_type()
-        team = get_team_from_title(post.title)
-        team_color = TEAM_COLORS.get(team, "#000000")
+        style_label = "🌀 BLUR background" if bg_mode == "blur" else "⬛ BLACK BARS"
+        print(f"🎲 STYLE: {style_label} selected for this clip.")
+
+        print(f"✅ PROCESS: {post.url} (duration={true_dur:.2f}s, proceeding!)")
         final_vid = path.replace(".mp4", "_VERTICAL.mp4")
 
         try:
             process_video_with_background(
                 input_mp4=path,
                 output_mp4=final_vid,
-                mode=bg_mode if bg_mode != "teamcolor" else "teamcolor",
-                team_color=team_color
+                mode=bg_mode
             )
         except subprocess.TimeoutExpired:
             print(f"⏭️ SKIP: Video processing killed due to excess runtime. Removing and proceeding to next video.")
@@ -289,4 +274,4 @@ if __name__ == "__main__":
         processed += 1
         print(f"✅ Processed: {headline}")
 
-print("All done, finished scanning posts!")
+    print("All done, finished scanning posts!")
