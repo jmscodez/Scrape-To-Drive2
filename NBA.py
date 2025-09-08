@@ -138,6 +138,8 @@ def download_video(url):
         print(f"❌ Download failed for {url}: {e}")
     return None
 
+MAX_PROCESS_SECONDS = 600  # 10 minutes in seconds
+
 def process_video_with_background(input_mp4, output_mp4, mode, team_color=None):
     filter_vf = ""
     if mode == "black":
@@ -159,9 +161,19 @@ def process_video_with_background(input_mp4, output_mp4, mode, team_color=None):
         '-c:a', 'aac', output_mp4
     ]
     try:
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, timeout=MAX_PROCESS_SECONDS)
+    except subprocess.TimeoutExpired:
+        print(f"🛑 TIMEOUT: ffmpeg took too long (>{MAX_PROCESS_SECONDS}s)! Deleting files and skipping this video.")
+        if os.path.exists(input_mp4):
+            os.remove(input_mp4)
+        if os.path.exists(output_mp4):
+            os.remove(output_mp4)
+        # Signal skip to main loop
+        raise
     except Exception as e:
         print(f"❌ Processing failed: {e}")
+        if os.path.exists(output_mp4):
+            os.remove(output_mp4)
 
 def generate_headline(post_title):
     try:
@@ -210,7 +222,6 @@ def generate_headline(post_title):
         return sanitize_filename(post_title)[:100]
 
 # ------------------ Main Process ------------------
-
 reddit = praw.Reddit(
     client_id=os.environ['REDDIT_CLIENT_ID'],
     client_secret=os.environ['REDDIT_CLIENT_SECRET'],
@@ -229,10 +240,9 @@ if __name__ == "__main__":
 
         path = download_video(post.url)
         if not path or not os.path.isfile(path):
-            print(f"SKIP: Could not download video for {post.url}")
+            print(f"⏭️ SKIP: Could not download video for {post.url}")
             continue
 
-        # Strict TRUE duration filtering right after download (ffprobe)
         true_dur = get_true_duration(path)
         print(f"🕒 CHECK: Downloaded video duration = {true_dur:.2f} sec for post '{post.title[:60]}'")
         if not (10 <= true_dur <= 180):
@@ -241,17 +251,26 @@ if __name__ == "__main__":
             continue
 
         print(f"✅ PROCESS: {post.url} (duration={true_dur:.2f}s, proceeding!)")
-        # Pick random background style here
         bg_mode = pick_background_type()
         team = get_team_from_title(post.title)
         team_color = TEAM_COLORS.get(team, "#000000")
         final_vid = path.replace(".mp4", "_VERTICAL.mp4")
-        process_video_with_background(
-            input_mp4=path,
-            output_mp4=final_vid,
-            mode=bg_mode if bg_mode != "teamcolor" else "teamcolor",
-            team_color=team_color
-        )
+
+        try:
+            process_video_with_background(
+                input_mp4=path,
+                output_mp4=final_vid,
+                mode=bg_mode if bg_mode != "teamcolor" else "teamcolor",
+                team_color=team_color
+            )
+        except subprocess.TimeoutExpired:
+            print(f"⏭️ SKIP: Video processing killed due to excess runtime. Removing and proceeding to next video.")
+            if os.path.exists(path):
+                os.remove(path)
+            if os.path.exists(final_vid):
+                os.remove(final_vid)
+            continue
+
         os.remove(path)
         headline = sanitize_filename(generate_headline(post.title))
         final = f"{headline}.mp4"
