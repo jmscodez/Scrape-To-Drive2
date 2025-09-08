@@ -97,15 +97,6 @@ TEAM_COLORS = {
     # Add/modify as needed
 }
 
-WATERMARK_POSITIONS = [
-    ("30", "60"),      # top left
-    ("830", "50"),     # top right
-    ("30", "1800"),    # bottom left
-    ("830", "1800"),   # bottom right
-    ("450", "1650"),   # center bottom
-    ("450", "100"),    # center top
-]
-
 def pick_background_type():
     return random.choice(['black', 'blur', 'teamcolor'])
 
@@ -208,30 +199,9 @@ def process_video_with_background(input_mp4, output_mp4, mode, post_title, team_
     elif mode == "teamcolor" and team_color:
         filter_vf = f"color=size=1080x1920:color={team_color}[bg];[0]scale=1080:-1:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2[main2];[bg][main2]overlay=(W-w)/2:(H-h)/2"
 
-    # Watermark animation setup (moves position every 7 seconds)
-    drawtext_filters = ""
-    try:
-        probe = subprocess.run([
-            'ffprobe', '-v', 'error', '-select_streams', 'v:0',
-            '-show_entries', 'stream=duration', '-of', 'default=noprint_wrappers=1:nokey=1', input_mp4
-        ], capture_output=True, text=True)
-        duration = float(probe.stdout.strip())
-    except Exception:
-        duration = 30
-    n_locs = len(WATERMARK_POSITIONS)
-    interval = 7
-    for i, (x, y) in enumerate(WATERMARK_POSITIONS):
-        start = i * interval
-        end = min((i + 1) * interval, int(duration))
-        draw = (
-            f"drawtext=text='@impulseprod':fontcolor=white:fontsize=60:x={x}:y={y}:"
-            f"box=1:boxborderw=6:boxcolor=black@0.1:enable='between(t,{start},{end})',"
-        )
-        drawtext_filters += draw
-    full_filter = filter_vf + "," + drawtext_filters[:-1]  # Remove trailing comma
     cmd = [
         'ffmpeg','-y','-i',input_mp4,
-        '-vf',full_filter,
+        '-vf',filter_vf,
         '-c:v','libx264','-preset','fast','-crf','23',
         '-c:a','aac',output_mp4
     ]
