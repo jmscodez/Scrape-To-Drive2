@@ -12,24 +12,23 @@ import ffmpeg
 # -- ENV SECRETS --
 HIGHLIGHTLY_API_KEY = os.getenv('HIGHLIGHTLY_API_KEY')
 
-SHEET_ID = '1ri18MOCwflcKTNLG1rRb2TW_-qc4ICRqoiSDtJAeO3M'
+SHEET_ID = '1NR_UyXshaiJ9X2XFdVPpch3fpdJZUq6qLmGeMesUMrQ'
 SHEET_TAB = 'Top_5_Master'
 DOWNLOAD_DIR = './downloads'
 OUT_VIDEO = './final.mp4'
 GDRIVE_PARENT = 'impulse'
 GDRIVE_FOLDER = 'Top 5'
 
-# Google Sheets AUTH (use GOOGLE_SHEETS_CREDENTIALS for Sheets read/write)
-sheets_creds_json = os.getenv('GOOGLE_SHEETS_CREDENTIALS')
-sheets_creds = Credentials.from_service_account_info(json.loads(sheets_creds_json), scopes=['https://www.googleapis.com/auth/spreadsheets'])
-gc = gspread.authorize(sheets_creds)
-
-# Google Drive AUTH (use GDRIVE_SERVICE_ACCOUNT for uploads/Drive)
-drive_creds_json = os.getenv('GDRIVE_SERVICE_ACCOUNT')
-drive_creds = Credentials.from_service_account_info(json.loads(drive_creds_json), scopes=['https://www.googleapis.com/auth/drive'])
+# Google Service Account for both Google Sheets and Drive
+creds_json = os.getenv('GDRIVE_SERVICE_ACCOUNT')
+creds = Credentials.from_service_account_info(json.loads(creds_json),
+    scopes=[
+        'https://www.googleapis.com/auth/drive',
+        'https://www.googleapis.com/auth/spreadsheets'
+    ])
+gc = gspread.authorize(creds)
 import googleapiclient.discovery
-drive_service = googleapiclient.discovery.build('drive', 'v3', credentials=drive_creds)
-
+drive_service = googleapiclient.discovery.build('drive', 'v3', credentials=creds)
 
 def ensure_drive_folder(parent, child):
     # Ensure /impulse/Top 5 exists, return its ID
@@ -60,13 +59,11 @@ def get_suggestions(row):
     return [row[f'Suggestion {i}'] for i in range(1, 11) if row.get(f'Suggestion {i}', '').strip()]
 
 def search_highlightly(query, sport):
-    # Map sport string to API endpoint
     endpoint = 'football' if sport.lower() == 'nfl' else 'basketball'
     url = f'https://highlightly.net/api/{endpoint}/highlights?search={requests.utils.quote(query)}'
     resp = requests.get(url, headers={"Authorization": f"Bearer {HIGHLIGHTLY_API_KEY}"})
     results = resp.json()
     if 'data' in results and results['data']:
-        # Always return the first valid video result
         return results['data'][0]['media_url']
     return None
 
@@ -77,7 +74,6 @@ def download_video(url, outname):
             f.write(chunk)
 
 def make_text_overlay(text, filename, size=(1280, 160), fontsize=70):
-    # Accepts .ttf font in repo, or uses default PIL if "arial.ttf" not found
     try:
         font = ImageFont.truetype("arial.ttf", fontsize)
     except:
