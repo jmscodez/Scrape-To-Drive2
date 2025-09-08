@@ -8,8 +8,10 @@ from google.oauth2.service_account import Credentials
 from PIL import Image, ImageDraw, ImageFont
 import ffmpeg
 
-# ====== CONFIG =======
+# ========= CONFIG ===========
+# -- ENV SECRETS --
 HIGHLIGHTLY_API_KEY = os.getenv('HIGHLIGHTLY_API_KEY')
+
 SHEET_ID = '1NR_UyXshaiJ9X2XFdVPpch3fpdJZUq6qLmGeMesUMrQ'
 SHEET_TAB = 'Top_5_Master'
 DOWNLOAD_DIR = './downloads'
@@ -17,18 +19,17 @@ OUT_VIDEO = './final.mp4'
 GDRIVE_PARENT = 'impulse'
 GDRIVE_FOLDER = 'Top 5'
 
-# Authenticate with Google Sheets/Drive
-creds_json = os.getenv('GDRIVE_SERVICE_ACCOUNT')
-scopes = [
-    'https://www.googleapis.com/auth/drive',
-    'https://www.googleapis.com/auth/spreadsheets'
-]
-creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=scopes)
-gc = gspread.authorize(creds)
+# Google Sheets AUTH (use GOOGLE_SHEETS_CREDENTIALS for Sheets read/write)
+sheets_creds_json = os.getenv('GOOGLE_SHEETS_CREDENTIALS')
+sheets_creds = Credentials.from_service_account_info(json.loads(sheets_creds_json), scopes=['https://www.googleapis.com/auth/spreadsheets'])
+gc = gspread.authorize(sheets_creds)
 
-service = creds.with_scopes(scopes)
+# Google Drive AUTH (use GDRIVE_SERVICE_ACCOUNT for uploads/Drive)
+drive_creds_json = os.getenv('GDRIVE_SERVICE_ACCOUNT')
+drive_creds = Credentials.from_service_account_info(json.loads(drive_creds_json), scopes=['https://www.googleapis.com/auth/drive'])
 import googleapiclient.discovery
-drive_service = googleapiclient.discovery.build('drive', 'v3', credentials=creds)
+drive_service = googleapiclient.discovery.build('drive', 'v3', credentials=drive_creds)
+
 
 def ensure_drive_folder(parent, child):
     # Ensure /impulse/Top 5 exists, return its ID
@@ -43,7 +44,7 @@ def ensure_drive_folder(parent, child):
 def update_sheet_used(row_index):
     sh = gc.open_by_key(SHEET_ID)
     ws = sh.worksheet(SHEET_TAB)
-    ws.update_cell(row_index+2, 6, "Yes")  # 1-based, plus header
+    ws.update_cell(row_index+2, 6, "Yes")  # Update "Used?" (1-based, plus header)
 
 def get_next_unused_idea():
     sh = gc.open_by_key(SHEET_ID)
@@ -64,8 +65,8 @@ def search_highlightly(query, sport):
     url = f'https://highlightly.net/api/{endpoint}/highlights?search={requests.utils.quote(query)}'
     resp = requests.get(url, headers={"Authorization": f"Bearer {HIGHLIGHTLY_API_KEY}"})
     results = resp.json()
-    # Pick first valid video result
     if 'data' in results and results['data']:
+        # Always return the first valid video result
         return results['data'][0]['media_url']
     return None
 
@@ -76,27 +77,28 @@ def download_video(url, outname):
             f.write(chunk)
 
 def make_text_overlay(text, filename, size=(1280, 160), fontsize=70):
-    font = ImageFont.truetype("arial.ttf", fontsize)
+    # Accepts .ttf font in repo, or uses default PIL if "arial.ttf" not found
+    try:
+        font = ImageFont.truetype("arial.ttf", fontsize)
+    except:
+        font = ImageFont.load_default()
     img = Image.new("RGBA", size, (0,0,0,180))
     draw = ImageDraw.Draw(img)
     draw.text((40,30), text, font=font, fill=(255,255,255,255))
     img.save(filename)
 
-def combine_clips_with_overlays(titles, clips, outname):
-    # titles: [("TOP 5....", "#1...", "#2...", ...)]
-    # clips: filenames
+def combine_clips_with_overlays(rank_titles, clips, outname):
     overlays = []
-    for i, (title, clip) in enumerate(zip(titles, clips)):
-        txt = f"{title}"
+    for i, (rank, clip) in enumerate(zip(rank_titles, clips)):
+        txt = f"{rank}"
         img_overlay = f"overlay_{i+1}.png"
         make_text_overlay(txt, img_overlay)
         overlays.append(img_overlay)
-        # Overlay with ffmpeg
         tmp = f'overlayed_{i+1}.mp4'
         (
             ffmpeg
             .input(clip)
-            .output(tmp, vf=f"movie={img_overlay} [ol]; [in][ol] overlay=0:0 [out]", vcodec="libx264", acodec="copy", strict='experimental')
+            .output(tmp, vf=f"movie={img_overlay} [ol]; [in][ol] overlay=0:0 [out]", vcodec="libx264", acodec="copy")
             .overwrite_output()
             .run()
         )
@@ -109,12 +111,12 @@ def combine_clips_with_overlays(titles, clips, outname):
     ffmpeg.input(txtfile, format='concat', safe=0).output(outname, c='copy').overwrite_output().run()
 
 def upload_to_drive(filepath, folder_id):
-    # Uploads the created video to Google Drive folder
+    from googleapiclient.http import MediaFileUpload
     file_metadata = {
         'name': os.path.basename(filepath),
         'parents': [folder_id]
     }
-    media = googleapiclient.http.MediaFileUpload(filepath, mimetype='video/mp4')
+    media = MediaFileUpload(filepath, mimetype='video/mp4')
     drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
 
 def main():
@@ -148,8 +150,7 @@ def main():
         filenames.append(fname)
     print("Downloaded highlight clips.")
 
-    # Create main overlay, then overlays for #1 to #5
-    main_title = title.upper()
+    # Overlays for #1 to #5
     rank_titles = [f"#{i+1}" for i in range(5)]
     combine_clips_with_overlays(rank_titles, filenames, OUT_VIDEO)
     print("Video composed.")
