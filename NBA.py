@@ -234,13 +234,13 @@ if __name__ == "__main__":
 
         # Strict TRUE duration filtering right after download (ffprobe)
         true_dur = get_true_duration(path)
-        print(f"CHECK: Downloaded video duration = {true_dur:.2f} sec for post '{post.title[:60]}'")
+        print(f"🕒 CHECK: Downloaded video duration = {true_dur:.2f} sec for post '{post.title[:60]}'")
         if not (10 <= true_dur <= 180):
-            print(f"SKIP: Removing video '{path}' with duration {true_dur:.2f} sec (not in range 10-180s).")
+            print(f"⏭️ SKIP: Removing video '{path}' with duration {true_dur:.2f} sec (⛔ not in range 10-180s).")
             os.remove(path)
             continue
 
-        print(f"PROCESS: {post.url} (duration={true_dur:.2f}s, proceeding!)")
+        print(f"✅ PROCESS: {post.url} (duration={true_dur:.2f}s, proceeding!)")
         # Pick random background style here
         bg_mode = pick_background_type()
         team = get_team_from_title(post.title)
