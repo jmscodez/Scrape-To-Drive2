@@ -1,0 +1,29 @@
+name: Generate Top 5 Highlight Video
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 16 * * *'  # 12PM ET daily (adjust as you like)
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install system deps
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg fonts-dejavu-core
+    - name: Install python dependencies
+      run: |
+        pip install -r requirements.txt
+    - name: Generate Top 5 Video
+      env:
+        HIGHLIGHTLY_API_KEY: ${{ secrets.HIGHLIGHTLY_API_KEY }}
+        GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
+      run: |
+        python create_top5_video.py
