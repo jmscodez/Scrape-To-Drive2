@@ -49,6 +49,16 @@ def sanitize_filename(fn):
     fn = re.sub(r'[\\/*?:"<>|]', "", fn)
     return fn.strip()[:100]
 
+def get_true_duration(path):
+    try:
+        result = subprocess.run(
+            ['ffprobe','-v','error','-show_entries','format=duration','-of','default=noprint_wrappers=1:nokey=1', path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        return float(result.stdout.strip())
+    except Exception:
+        return 0
+
 def get_video_resolution(path):
     cmd = [
         'ffprobe', '-v', 'error',
@@ -122,11 +132,11 @@ def download_video(url):
             )
             if 'audio' not in result.stdout:
                 os.remove(fn)
-                return None, 0
-            return fn, info.get('duration',0)
+                return None
+            return fn
     except Exception as e:
         print(f"❌ Download failed for {url}: {e}")
-    return None, 0
+    return None
 
 def process_video_with_background(input_mp4, output_mp4, mode, team_color=None):
     filter_vf = ""
@@ -217,15 +227,20 @@ if __name__ == "__main__":
         if not any(d in post.url for d in VIDEO_DOMAINS):
             continue
 
-        path, dur = download_video(post.url)
-        # Enforce strict duration filter -- ONLY run process if dur is valid
-        if not path or not (10 <= dur <= 180):
-            print(f"SKIP: {post.url} (dur={dur})")
-            if path:
-                os.remove(path)
+        path = download_video(post.url)
+        if not path or not os.path.isfile(path):
+            print(f"SKIP: Could not download video for {post.url}")
             continue
 
-        print(f"PROCESS: {post.url} (dur={dur})")
+        # Strict TRUE duration filtering right after download (ffprobe)
+        true_dur = get_true_duration(path)
+        print(f"CHECK: Downloaded video duration = {true_dur:.2f} sec for post '{post.title[:60]}'")
+        if not (10 <= true_dur <= 180):
+            print(f"SKIP: Removing video '{path}' with duration {true_dur:.2f} sec (not in range 10-180s).")
+            os.remove(path)
+            continue
+
+        print(f"PROCESS: {post.url} (duration={true_dur:.2f}s, proceeding!)")
         # Pick random background style here
         bg_mode = pick_background_type()
         team = get_team_from_title(post.title)
