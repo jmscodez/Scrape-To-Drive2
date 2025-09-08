@@ -3,7 +3,7 @@ name: Generate Top 5 Highlight Video
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 16 * * *'  # 12PM ET daily (adjust as you like)
+    - cron: '0 16 * * *'
 
 jobs:
   build:
