@@ -8,3 +8,6 @@ Pillow
 ffmpeg-python
 opencv-python
 numpy
+google-auth
+google-auth-oauthlib
+python-dotenv
