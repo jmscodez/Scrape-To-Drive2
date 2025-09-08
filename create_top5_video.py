@@ -12,7 +12,7 @@ import ffmpeg
 # -- ENV SECRETS --
 HIGHLIGHTLY_API_KEY = os.getenv('HIGHLIGHTLY_API_KEY')
 
-SHEET_ID = '1NR_UyXshaiJ9X2XFdVPpch3fpdJZUq6qLmGeMesUMrQ'
+SHEET_ID = '1ri18MOCwflcKTNLG1rRb2TW_-qc4ICRqoiSDtJAeO3M'
 SHEET_TAB = 'Top_5_Master'
 DOWNLOAD_DIR = './downloads'
 OUT_VIDEO = './final.mp4'
